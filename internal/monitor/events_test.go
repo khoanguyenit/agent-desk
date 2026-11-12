@@ -41,28 +41,28 @@ func TestDiff(t *testing.T) {
 			prev: snapshotWith(busy),
 			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "busy", ActiveAgents: 1,
 				Agents: []Agent{agent("a", "Code review", StatusDone), agent("b", "Go review", StatusQuiet), agent("c", "Old one", StatusDone)}}),
-			want: []Event{{Kind: EventAgentsDone, Project: "app", Session: "Fix timeout", Agents: []string{"Code review"}, StillActive: 1}},
+			want: []Event{{Kind: EventAgentsDone, Project: "app", SessionID: "s1", Session: "Fix timeout", Agents: []string{"Code review"}, StillActive: 1}},
 		},
 		{
 			name: "several agents finishing together are one event",
 			prev: snapshotWith(busy),
 			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "busy",
 				Agents: []Agent{agent("a", "Code review", StatusDone), agent("b", "Go review", StatusDone), agent("c", "Old one", StatusDone)}}),
-			want: []Event{{Kind: EventAgentsDone, Project: "app", Session: "Fix timeout", Agents: []string{"Code review", "Go review"}}},
+			want: []Event{{Kind: EventAgentsDone, Project: "app", SessionID: "s1", Session: "Fix timeout", Agents: []string{"Code review", "Go review"}}},
 		},
 		{
 			name: "the session coming to rest is the event, with the agents that finished along the way",
 			prev: snapshotWith(busy),
 			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "idle", ActiveAgents: 1,
 				Agents: []Agent{agent("a", "Code review", StatusDone), agent("b", "Go review", StatusQuiet), agent("c", "Old one", StatusDone)}}),
-			want: []Event{{Kind: EventSessionIdle, Project: "app", Session: "Fix timeout", Status: "idle", Agents: []string{"Code review"}, StillActive: 1}},
+			want: []Event{{Kind: EventSessionIdle, Project: "app", SessionID: "s1", Session: "Fix timeout", Status: "idle", Agents: []string{"Code review"}, StillActive: 1}},
 		},
 		{
 			name: "an agent that started and finished between two refreshes still counts",
 			prev: snapshotWith(busy),
 			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "busy", ActiveAgents: 2,
 				Agents: append([]Agent{agent("quick", "Quick lookup", StatusDone)}, busy.Agents...)}),
-			want: []Event{{Kind: EventAgentsDone, Project: "app", Session: "Fix timeout", Agents: []string{"Quick lookup"}, StillActive: 2}},
+			want: []Event{{Kind: EventAgentsDone, Project: "app", SessionID: "s1", Session: "Fix timeout", Agents: []string{"Quick lookup"}, StillActive: 2}},
 		},
 		{
 			name: "going from idle to busy is not an event",
@@ -78,7 +78,34 @@ func TestDiff(t *testing.T) {
 			name: "a session with no title is named by its registry name",
 			prev: snapshotWith(Session{ID: "s3", PID: 3, Name: "app-7", Status: "busy"}),
 			cur:  snapshotWith(Session{ID: "s3", PID: 3, Name: "app-7", Status: "idle"}),
-			want: []Event{{Kind: EventSessionIdle, Project: "app", Session: "app-7", Status: "idle"}},
+			want: []Event{{Kind: EventSessionIdle, Project: "app", SessionID: "s3", Session: "app-7", Status: "idle"}},
+		},
+		{
+			name: "an agent given up on is said once, when it stops being counted as working",
+			prev: snapshotWith(busy),
+			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "busy", ActiveAgents: 1,
+				Agents: []Agent{agent("a", "Code review", StatusRunning), agent("b", "Go review", StatusStopped), agent("c", "Old one", StatusDone)}}),
+			want: []Event{{Kind: EventAgentsStuck, Project: "app", SessionID: "s1", Session: "Fix timeout", Agents: []string{"Go review"}, StillActive: 1}},
+		},
+		{
+			name: "an agent that was already stopped is not news",
+			prev: snapshotWith(Session{ID: "s1", PID: 1, Status: "busy", Agents: []Agent{agent("b", "Go review", StatusStopped)}}),
+			cur:  snapshotWith(Session{ID: "s1", PID: 1, Status: "busy", Agents: []Agent{agent("b", "Go review", StatusStopped)}}),
+		},
+		{
+			name: "a long wait on one tool is said when it passes the mark",
+			prev: snapshotWith(Session{ID: "s1", PID: 1, Title: "Build", Status: "busy", ActiveAgents: 1,
+				Agents: []Agent{{ID: "a", Description: "Run the suite", Status: StatusQuiet, AwaitingTool: true, SilentMs: slowToolAfter.Milliseconds() - 1000}}}),
+			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Build", Status: "busy", ActiveAgents: 1,
+				Agents: []Agent{{ID: "a", Description: "Run the suite", Status: StatusQuiet, AwaitingTool: true, SilentMs: slowToolAfter.Milliseconds() + 1000}}}),
+			want: []Event{{Kind: EventToolSlow, Project: "app", SessionID: "s1", Session: "Build", Agents: []string{"Run the suite"}, StillActive: 1}},
+		},
+		{
+			name: "and not again after it",
+			prev: snapshotWith(Session{ID: "s1", PID: 1, Status: "busy", ActiveAgents: 1,
+				Agents: []Agent{{ID: "a", Description: "Run the suite", Status: StatusQuiet, AwaitingTool: true, SilentMs: slowToolAfter.Milliseconds() + 1000}}}),
+			cur: snapshotWith(Session{ID: "s1", PID: 1, Status: "busy", ActiveAgents: 1,
+				Agents: []Agent{{ID: "a", Description: "Run the suite", Status: StatusQuiet, AwaitingTool: true, SilentMs: slowToolAfter.Milliseconds() + 3000}}}),
 		},
 	}
 	for _, c := range cases {
@@ -91,6 +118,30 @@ func TestDiff(t *testing.T) {
 				t.Fatalf("events = %+v\n   want %+v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestBudgetCrossed(t *testing.T) {
+	at := func(day string, usd float64) Snapshot {
+		return Snapshot{Today: day, TodaySpend: Spend{CostUSD: usd}}
+	}
+	cases := []struct {
+		name      string
+		prev, cur Snapshot
+		limit     float64
+		want      bool
+	}{
+		{"going past the limit", at("2026-11-12", 9.5), at("2026-11-12", 10.1), 10, true},
+		{"already past it", at("2026-11-12", 10.1), at("2026-11-12", 10.4), 10, false},
+		{"still under it", at("2026-11-12", 3), at("2026-11-12", 4), 10, false},
+		{"no limit set", at("2026-11-12", 9.5), at("2026-11-12", 10.1), 0, false},
+		{"the first snapshot after start-up", Snapshot{}, at("2026-11-12", 12), 10, false},
+		{"a new day is not a crossing", at("2026-11-11", 2), at("2026-11-12", 11), 10, false},
+	}
+	for _, c := range cases {
+		if got := BudgetCrossed(c.prev, c.cur, c.limit); got != c.want {
+			t.Errorf("%s: BudgetCrossed = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 
@@ -138,6 +189,19 @@ func TestEventText(t *testing.T) {
 			privacy:   true,
 			wantTitle: "app: đã xong, đang chờ bạn",
 			wantBody:  "1 agent vừa xong.\nCòn 1 agent đang chạy.",
+		},
+		{
+			name:      "agents given up on",
+			event:     Event{Kind: EventAgentsStuck, Project: "app", Agents: []string{"Go review"}, StillActive: 2},
+			wantTitle: "app: 1 agent có vẻ đã dừng giữa chừng",
+			wantBody:  "Go review\nIm lặng đã lâu mà chưa báo xong.\nCòn 2 agent đang chạy.",
+		},
+		{
+			name:      "a slow tool, with privacy on",
+			event:     Event{Kind: EventToolSlow, Project: "app", Agents: []string{"Run the suite"}},
+			privacy:   true,
+			wantTitle: "app: 1 agent chờ một lệnh đã 30 phút",
+			wantBody:  "Lệnh chạy lâu là bình thường; nếu không phải vậy thì có thể nó đã treo.",
 		},
 		{
 			name:      "privacy on agents done",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Event kinds.
@@ -14,12 +15,26 @@ const (
 	// EventAgentsDone: one or more subagents of a session finished while the
 	// session itself carried on.
 	EventAgentsDone = "agents-done"
+	// EventAgentsStuck: one or more subagents that were working are now
+	// counted as stopped: they fell silent without finishing.
+	EventAgentsStuck = "agents-stuck"
+	// EventToolSlow: one or more subagents have been waiting on a single tool
+	// call for a long time. It is said once, when the wait passes the mark.
+	EventToolSlow = "tool-slow"
 )
+
+// slowToolAfter is how long an agent waits on one tool call before the user
+// is told. Builds and test suites take minutes; half an hour is unusual.
+const slowToolAfter = 30 * time.Minute
 
 // Event is something that finished between two snapshots.
 type Event struct {
 	Kind    string
 	Project string
+	// ProjectPath and SessionID say where the event happened, so that a
+	// click on its notification can lead there. They are never shown.
+	ProjectPath string
+	SessionID   string
 	// Session is the session's title, or its name when it has no title yet.
 	Session string
 	// Status is the session's new status for EventSessionIdle.
@@ -47,6 +62,18 @@ func (e Event) Text(privacy bool) (title, body string) {
 		if n := len(e.Agents); n > 0 {
 			lines = append(lines, fmt.Sprintf("%d agent vừa xong.", n))
 		}
+	case EventAgentsStuck:
+		title = fmt.Sprintf("%s: %d agent có vẻ đã dừng giữa chừng", e.Project, len(e.Agents))
+		if !privacy {
+			lines = append(lines, listNames(e.Agents, 3))
+		}
+		lines = append(lines, "Im lặng đã lâu mà chưa báo xong.")
+	case EventToolSlow:
+		title = fmt.Sprintf("%s: %d agent chờ một lệnh đã %d phút", e.Project, len(e.Agents), int(slowToolAfter.Minutes()))
+		if !privacy {
+			lines = append(lines, listNames(e.Agents, 3))
+		}
+		lines = append(lines, "Lệnh chạy lâu là bình thường; nếu không phải vậy thì có thể nó đã treo.")
 	default:
 		title = fmt.Sprintf("%s: %d agent đã xong", e.Project, len(e.Agents))
 		if !privacy {
@@ -67,6 +94,14 @@ func listNames(names []string, limit int) string {
 }
 
 func sessionKey(s Session) string { return s.ID + "#" + strconv.Itoa(s.PID) }
+
+// BudgetCrossed reports whether today's cost went past limitUSD between two
+// snapshots of the same day. The first snapshot after start-up never counts,
+// and neither does a new day: only the moment of crossing is news.
+func BudgetCrossed(prev, cur Snapshot, limitUSD float64) bool {
+	return limitUSD > 0 && prev.Today != "" && prev.Today == cur.Today &&
+		prev.TodaySpend.CostUSD < limitUSD && cur.TodaySpend.CostUSD >= limitUSD
+}
 
 // Diff reports what finished between prev and cur. A session that is new in
 // cur produces nothing: there is no earlier state to compare it with, so the
@@ -91,35 +126,54 @@ func Diff(prev, cur Snapshot) []Event {
 				title = s.Name
 			}
 
-			wasStatus := map[string]string{}
+			wasAgent := map[string]Agent{}
 			for _, a := range old.Agents {
-				wasStatus[a.ID] = a.Status
+				wasAgent[a.ID] = a
 			}
-			var finished []string
+			var finished, stuck, slow []string
 			for _, a := range s.Agents {
-				if a.Status != StatusDone {
-					continue
-				}
-				// An agent seen for the first time and already done started
-				// and finished between two refreshes.
-				if was, seen := wasStatus[a.ID]; !seen || was != StatusDone {
-					finished = append(finished, a.Description)
+				was, seen := wasAgent[a.ID]
+				switch {
+				case a.Status == StatusDone:
+					// An agent seen for the first time and already done
+					// started and finished between two refreshes.
+					if !seen || was.Status != StatusDone {
+						finished = append(finished, a.Description)
+					}
+				case a.Status == StatusStopped:
+					// Only the moment it is given up on is news. One that
+					// was already stopped when first seen is history.
+					if seen && (was.Status == StatusRunning || was.Status == StatusQuiet) {
+						stuck = append(stuck, a.Description)
+					}
+				case a.AwaitingTool:
+					if seen && was.AwaitingTool && was.SilentMs < slowToolAfter.Milliseconds() && a.SilentMs >= slowToolAfter.Milliseconds() {
+						slow = append(slow, a.Description)
+					}
 				}
 			}
 
+			at := Event{Project: p.Name, ProjectPath: p.Path, SessionID: s.ID, Session: title, StillActive: s.ActiveAgents}
+			with := func(kind string, agents []string) Event {
+				e := at
+				e.Kind, e.Agents = kind, agents
+				return e
+			}
 			switch {
 			case old.Status == "busy" && s.Status != "busy":
 				// The session coming to rest is the news; the agents that
 				// finished along the way are part of it.
-				events = append(events, Event{
-					Kind: EventSessionIdle, Project: p.Name, Session: title,
-					Status: s.Status, Agents: finished, StillActive: s.ActiveAgents,
-				})
+				e := with(EventSessionIdle, finished)
+				e.Status = s.Status
+				events = append(events, e)
 			case len(finished) > 0:
-				events = append(events, Event{
-					Kind: EventAgentsDone, Project: p.Name, Session: title,
-					Agents: finished, StillActive: s.ActiveAgents,
-				})
+				events = append(events, with(EventAgentsDone, finished))
+			}
+			if len(stuck) > 0 {
+				events = append(events, with(EventAgentsStuck, stuck))
+			}
+			if len(slow) > 0 {
+				events = append(events, with(EventToolSlow, slow))
 			}
 		}
 	}
