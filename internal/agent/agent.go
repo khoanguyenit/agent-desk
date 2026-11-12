@@ -570,6 +570,7 @@ func (m *Manager) Send(id, text string) error {
 		s.setActivity(ActivityWorking, "")
 	}
 	s.mu.Unlock()
+	id = s.id
 	m.notify(id)
 
 	if err := s.send(userMessage(text)); err != nil {
@@ -636,7 +637,7 @@ func (m *Manager) Decide(id, requestID string, allow bool) error {
 	}
 	s.touch()
 	s.mu.Unlock()
-	m.notify(id)
+	m.notify(s.id)
 	return nil
 }
 
@@ -727,16 +728,22 @@ func (m *Manager) Forget(id string) error {
 	if err != nil {
 		return nil
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The session may be opened again at this very moment. What is listed
+	// under its id is then another, running one, and that one stays.
+	if m.sessions[s.id] != s || m.opening[s.id] {
+		return errors.New("session này vừa được mở lại")
+	}
 	s.mu.Lock()
 	over := s.over()
 	s.mu.Unlock()
 	if !over {
 		return errors.New("session còn đang chạy")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessions, id)
-	if i := slices.Index(m.order, id); i >= 0 {
+	// By the id it is listed under, which is not always the id asked for.
+	delete(m.sessions, s.id)
+	if i := slices.Index(m.order, s.id); i >= 0 {
 		m.order = slices.Delete(m.order, i, i+1)
 	}
 	return nil

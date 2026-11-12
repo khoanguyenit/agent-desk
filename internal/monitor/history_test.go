@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -205,6 +206,80 @@ func indexOf(t *testing.T, configDir, sessionID string) int {
 	}
 	t.Fatalf("no transcript of %s", sessionID)
 	return -1
+}
+
+func TestHistoryIsKeptForLongerThanOneReportShows(t *testing.T) {
+	w := fixture(t)
+	svc, _, _ := w.keeping(t)
+	from, today, _ := svc.stretch(historyKeepDays)
+	if today != "2026-11-12" || from != "2025-10-09" {
+		t.Fatalf("%d days back from %s is %s", historyKeepDays, today, from)
+	}
+	if historyKeepDays <= HistoryMaxDays {
+		t.Fatal("what is kept must reach further back than what one report shows")
+	}
+}
+
+func TestSessionReadOnlyInPartIsNotTakenForWhole(t *testing.T) {
+	w := fixture(t)
+	dir := oldSession(t, w)
+	main := filepath.Join(dir, "sid-old.jsonl")
+	agents := scan.AgentFiles(main)
+
+	rows, cwd, whole, ok := readSession(main, agents, ict)
+	if !ok || !whole || len(rows) != 2 || cwd == "" {
+		t.Fatalf("a session read whole: rows=%d whole=%v ok=%v", len(rows), whole, ok)
+	}
+	// One of its agents' transcripts is listed but cannot be opened. What
+	// could be read is still worth having; it is not the last word, and
+	// Backfill files such a reading without a signature, to be done again.
+	gone := append(agents, scan.AgentFile{ID: "y", Path: filepath.Join(dir, "sid-old", "subagents", "agent-y.jsonl")})
+	rows, _, whole, ok = readSession(main, gone, ict)
+	if !ok || whole || len(rows) != 2 {
+		t.Fatalf("a session read in part: rows=%d whole=%v ok=%v", len(rows), whole, ok)
+	}
+	// With no main transcript there is no session to speak of.
+	if _, _, _, ok := readSession(filepath.Join(dir, "absent.jsonl"), nil, ict); ok {
+		t.Fatal("a session without a transcript was read")
+	}
+}
+
+func TestSessionThatClosedWithoutWorkTodayStillReachesTheHistory(t *testing.T) {
+	w := fixture(t)
+	// A session whose last lines are yesterday's, but whose file was touched
+	// today: it ended around midnight. It is not listed, and still counted.
+	cwd := filepath.Join(w.dir, "work", "late")
+	putAt(t, filepath.Join(w.dir, "projects", scan.Slug(cwd), "sid-late.jsonl"),
+		cwdLine("2026-11-11T16:59:00Z", cwd)+msg("msg_l1", "claude-sonnet-5-5", "2026-11-11T16:59:30Z", "", 100, 200, 0, 0), fixedNow)
+	svc, ledger, _ := w.keeping(t)
+	snap := svc.Snapshot()
+	for _, p := range snap.Projects {
+		if p.Name == "late" {
+			t.Fatal("a session that did nothing today is listed as closed today")
+		}
+	}
+	found := false
+	ledger.Each(func(id string, e history.Entry) { found = found || id == "sid-late" })
+	if !found {
+		t.Fatal("what it consumed yesterday never reached the history")
+	}
+}
+
+func TestAwaitBackfillSaysTheHistoryIsOnItsWay(t *testing.T) {
+	w := fixture(t)
+	svc, _, _ := w.keeping(t)
+	svc.AwaitBackfill()
+	if !svc.History(7).Scan.Running {
+		t.Fatal("a page asking before the first pass is told nothing is being read")
+	}
+	if err := svc.Backfill(context.Background()); err != nil || svc.History(7).Scan.Running {
+		t.Fatalf("after the pass: err=%v, still marked as running", err)
+	}
+	// Without a ledger there is nothing to wait for.
+	w.svc.AwaitBackfill()
+	if w.svc.History(7).Scan.Running {
+		t.Fatal("a service that keeps no history says it is reading one")
+	}
 }
 
 func TestBackfillStopsWhenAsked(t *testing.T) {
@@ -408,6 +483,26 @@ func TestClosedSessionCanBeLookedIntoAndOpenedAgain(t *testing.T) {
 		if _, err := w.svc.Resumable(id); err == nil {
 			t.Errorf("Resumable(%q) succeeded", id)
 		}
+	}
+}
+
+func TestSessionFiledUnderAnotherSpellingOfItsFolderIsOpenedAgain(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("capitals tell folders apart here")
+	}
+	w := fixture(t)
+	// The same folder, its drive letter (or any letter) in the other case.
+	other := strings.ToUpper(w.cwd)
+	if other == w.cwd {
+		other = strings.ToLower(w.cwd)
+	}
+	appendTo(t, filepath.Join(w.project, "sid-a.jsonl"), cwdLine("2026-11-12T02:59:40Z", other))
+	if err := os.Remove(filepath.Join(w.dir, "sessions", "100.json")); err != nil {
+		t.Fatal(err)
+	}
+	w.svc.Snapshot()
+	if dir, err := w.svc.Resumable("sid-a"); err != nil || dir != other {
+		t.Fatalf("Resumable = %q, %v", dir, err)
 	}
 }
 

@@ -93,3 +93,7 @@ export function StartSession(arg1, arg2, arg3, arg4) {
 export function TrustProject(arg1) {
   return window['go']['main']['App']['TrustProject'](arg1);
 }
+
+export function TrustResume(arg1) {
+  return window['go']['main']['App']['TrustResume'](arg1);
+}

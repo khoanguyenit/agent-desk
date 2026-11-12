@@ -3,6 +3,8 @@ package monitor
 import (
 	"errors"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"monitor-agent/internal/parse"
 	"monitor-agent/internal/scan"
@@ -176,7 +178,15 @@ func (s *Service) Resumable(sessionID string) (dir string, err error) {
 	if c.cwd == "" {
 		return "", errors.New("transcript của session này không ghi nó đã chạy ở thư mục nào")
 	}
-	if scan.Slug(c.cwd) != filepath.Base(filepath.Dir(c.path)) {
+	// Where capitals do not tell two folders apart they do not tell two
+	// spellings of one folder apart either: "d:\x" and "D:\x" are filed
+	// under the same folder there.
+	slug, filed := scan.Slug(c.cwd), filepath.Base(filepath.Dir(c.path))
+	same := slug == filed
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		same = strings.EqualFold(slug, filed)
+	}
+	if !same {
 		return "", errors.New("session này đã đổi thư mục làm việc giữa chừng, nên không mở lại được từ app")
 	}
 	return c.cwd, nil

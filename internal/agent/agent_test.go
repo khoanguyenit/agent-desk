@@ -934,6 +934,40 @@ func TestEndedSessionIsCarriedOnUnderItsID(t *testing.T) {
 	}
 }
 
+func TestForgetLeavesASessionThatWasOpenedAgain(t *testing.T) {
+	h := newHarness(t)
+	const old = "2b4e28ba-2fa1-41d2-883f-0016d3cca427"
+	id, err := h.m.Open(Options{Dir: h.dir, Prompt: "first", Mode: "ask", Resume: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
+	if err := h.m.End(id); err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the end", func(v View) bool { return v.State == StateEnded })
+
+	// It is opened again, and then someone asks to forget the one that ended.
+	if _, err := h.m.Open(Options{Dir: h.dir, Prompt: "second", Mode: "ask", Resume: old}); err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the second answer", func(v View) bool { return v.State == StateIdle })
+	if err := h.m.Forget(id); err == nil {
+		t.Fatal("a running session was forgotten")
+	}
+	if !h.m.Owns(id) || len(h.m.List()) != 1 {
+		t.Fatal("the session that was opened again is gone from the list")
+	}
+	// Once it has ended it goes, whichever of its ids it is asked for by.
+	if err := h.m.End(id); err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the end", func(v View) bool { return v.State == StateEnded })
+	if err := h.m.Forget(id); err != nil || h.m.Owns(id) || len(h.m.List()) != 0 {
+		t.Fatalf("Forget: %v, still listed=%v", err, h.m.Owns(id))
+	}
+}
+
 func TestSessionRunUnderAnotherIDIsStillFound(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("AGENT_TEST_FAKE_ID", "claude-picked-this")
@@ -944,6 +978,14 @@ func TestSessionRunUnderAnotherIDIsStillFound(t *testing.T) {
 	h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
 	if h.m.State("claude-picked-this") != StateIdle || !h.m.Owns(id) || h.m.State("someone-else") != "" {
 		t.Fatalf("State by Claude Code's id = %q", h.m.State("claude-picked-this"))
+	}
+	// Forgetting it by that id forgets the session itself.
+	if err := h.m.End(id); err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the end", func(v View) bool { return v.State == StateEnded })
+	if err := h.m.Forget("claude-picked-this"); err != nil || h.m.Owns(id) {
+		t.Fatalf("Forget by Claude Code's id: %v, still owned=%v", err, h.m.Owns(id))
 	}
 }
 

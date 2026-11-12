@@ -131,9 +131,11 @@ func partsOf(m map[string]*partAcc) []HistoryPart {
 	return out
 }
 
-// stretch returns the first and the last day of the n days ending today.
+// stretch returns the first and the last day of the n days ending today. It
+// does not bound n: History does that for what it reports, and the days the
+// history is kept for are more than it reports.
 func (s *Service) stretch(n int) (from, today string, start time.Time) {
-	n = min(max(n, 1), HistoryMaxDays)
+	n = max(n, 1)
 	local := s.now().In(s.loc)
 	// Noon, so that stepping by a day never lands on the wrong date where a
 	// day is 23 or 25 hours long.
@@ -148,10 +150,8 @@ func (s *Service) History(days int) History {
 	days = min(max(days, 1), HistoryMaxDays)
 	from, today, start := s.stretch(days)
 
-	s.mu.Lock()
 	prices, _ := s.prices()
 	ledger := s.ledger
-	s.mu.Unlock()
 	s.scanMu.Lock()
 	scanned := s.scan
 	s.scanMu.Unlock()
@@ -197,7 +197,7 @@ func (s *Service) History(days int) History {
 					d.projects[pkey] = p
 				}
 				p.acc.add(one)
-				model := pricing.Normalize(r.Model)
+				model := clean.Text(pricing.Normalize(r.Model), labelRunes)
 				m := d.models[model]
 				if m == nil {
 					m = &partAcc{name: ModelLabel(model)}
@@ -223,11 +223,9 @@ func (s *Service) History(days int) History {
 // HistoryRows lists the same stretch at its finest grain, for export: one row
 // per day, project and model, oldest day first.
 func (s *Service) HistoryRows(days int) []HistoryRow {
-	from, today, _ := s.stretch(days)
-	s.mu.Lock()
+	from, today, _ := s.stretch(min(max(days, 1), HistoryMaxDays))
 	prices, _ := s.prices()
 	ledger := s.ledger
-	s.mu.Unlock()
 	if ledger == nil {
 		return nil
 	}
@@ -246,7 +244,7 @@ func (s *Service) HistoryRows(days int) []HistoryRow {
 			if r.Day < from || r.Day > today {
 				continue
 			}
-			k := key{r.Day, pkey, pricing.Normalize(r.Model), r.Fast}
+			k := key{r.Day, pkey, clean.Text(pricing.Normalize(r.Model), labelRunes), r.Fast}
 			cur := sums[k]
 			if cur == nil {
 				cur = &row{name: pname, path: ppath}
@@ -306,11 +304,17 @@ func signature(main scan.Transcript, agents []scan.AgentFile) string {
 
 // readSession adds up one session from its transcripts on disk, the way the
 // board does for a session it shows. ok is false when the main transcript
-// could not be read at all.
-func readSession(path string, agents []scan.AgentFile, loc *time.Location) (rows []history.Row, cwd string, ok bool) {
+// could not be read at all. whole is false when a file was read only in part
+// or not at all: what was read is still worth having, but it is not the last
+// word on the session.
+func readSession(path string, agents []scan.AgentFile, loc *time.Location) (rows []history.Row, cwd string, whole, ok bool) {
 	main := parse.NewFile(path, loc, false)
-	if err := main.Update(); err != nil && main.Offset() == 0 {
-		return nil, "", false
+	whole = true
+	if err := main.Update(); err != nil {
+		if main.Offset() == 0 {
+			return nil, "", false, false
+		}
+		whole = false
 	}
 	merged := map[parse.Key]usage.Tokens{}
 	for k, tk := range main.Usage {
@@ -319,8 +323,11 @@ func readSession(path string, agents []scan.AgentFile, loc *time.Location) (rows
 	claimed := map[string]bool{}
 	for _, af := range agents {
 		f := parse.NewFile(af.Path, loc, true)
-		if err := f.Update(); err != nil && f.Offset() == 0 {
-			continue
+		if err := f.Update(); err != nil {
+			whole = false
+			if f.Offset() == 0 {
+				continue
+			}
 		}
 		for k, tk := range ownResponses(f, main, claimed) {
 			cur := merged[k]
@@ -328,7 +335,19 @@ func readSession(path string, agents []scan.AgentFile, loc *time.Location) (rows
 			merged[k] = cur
 		}
 	}
-	return rowsOf(merged), main.Cwd, true
+	return rowsOf(merged), main.Cwd, whole, true
+}
+
+// AwaitBackfill marks the history as being read before the reading has
+// begun. The app calls it at start-up, so that a page that asks at once is
+// told the history is on its way and not that there is none.
+func (s *Service) AwaitBackfill() {
+	if s.ledger == nil || s.configErr != nil {
+		return
+	}
+	s.scanMu.Lock()
+	s.scan.Running = true
+	s.scanMu.Unlock()
 }
 
 // Backfill reads into the history the sessions the board does not show: the
@@ -355,19 +374,27 @@ func (s *Service) Backfill(ctx context.Context) error {
 	defer func() { progress(len(all), false) }()
 
 	cutoff, _, _ := s.stretch(historyKeepDays)
+	onDisk := make(map[string]bool, len(all))
+	finished := true
 	for i, t := range all {
 		if ctx.Err() != nil {
+			finished = false
 			break
 		}
 		progress(i, true)
+		onDisk[t.SessionID] = true
 		agents := scan.AgentFiles(t.Path)
 		sig := signature(t, agents)
 		if s.ledger.Known(t.SessionID, sig) {
 			continue
 		}
-		rows, cwd, ok := readSession(t.Path, agents, s.loc)
+		rows, cwd, whole, ok := readSession(t.Path, agents, s.loc)
 		if !ok {
 			continue
+		}
+		if !whole {
+			// Not the whole of it: kept, but to be read again next time.
+			sig = ""
 		}
 		kept := rows[:0]
 		for _, r := range rows {
@@ -378,6 +405,10 @@ func (s *Service) Backfill(ctx context.Context) error {
 		s.ledger.Fill(t.SessionID, cwd, sig, kept)
 	}
 	s.ledger.Prune(cutoff)
+	if finished {
+		// Only a pass that saw every transcript can say which are gone.
+		s.ledger.ForgetEmpty(func(id string) bool { return onDisk[id] })
+	}
 	return s.ledger.Save()
 }
 
@@ -439,9 +470,7 @@ func newer(a, b []int) bool {
 // Claude Code on some machine has been seen to use it at those prices. The
 // most expensive comes first.
 func (s *Service) ModelChoices() []ModelChoice {
-	s.mu.Lock()
 	prices, _ := s.prices()
-	s.mu.Unlock()
 
 	type best struct {
 		id      string

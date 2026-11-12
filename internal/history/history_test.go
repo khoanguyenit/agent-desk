@@ -126,31 +126,158 @@ func TestPruneDropsWhatIsTooOld(t *testing.T) {
 	}
 }
 
-func TestFileThatCannotBeUsedIsPutAsideNotWrittenOver(t *testing.T) {
-	for name, body := range map[string]string{
-		"not json":           "{{{{",
-		"from a newer build": `{"version":99,"sessions":{"s":{"cwd":"/a","rows":[{"day":"2026-11-12","model":"m","tokens":{"input":1}}]}}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "history.json")
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+func TestFileThatCannotBeUnderstoodIsPutAsideNotWrittenOver(t *testing.T) {
+	const body = "{{{{"
+	path := filepath.Join(t.TempDir(), "history.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Twice over: the second file put aside must not write over the first.
+	for round, want := range []string{path + ".bak", ""} {
+		if round == 1 {
+			if err := os.WriteFile(path, []byte(body+"again"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			l, err := Open(path)
-			if err == nil || !l.Damaged() || len(entries(l)) != 0 {
-				t.Fatalf("err=%v damaged=%v entries=%d", err, l.Damaged(), len(entries(l)))
-			}
-			l.Record("s1", "/a", []Row{row("2026-11-12", "m", 1)})
-			if err := l.Save(); err != nil {
-				t.Fatal(err)
-			}
-			if kept, _ := os.ReadFile(path + ".bak"); string(kept) != body {
+		}
+		l, err := Open(path)
+		if err == nil || !l.Damaged() || l.Frozen() || len(entries(l)) != 0 {
+			t.Fatalf("round %d: err=%v damaged=%v frozen=%v entries=%d", round, err, l.Damaged(), l.Frozen(), len(entries(l)))
+		}
+		l.Record("s1", "/a", []Row{row("2026-11-12", "m", int64(round)+1)})
+		if err := l.Save(); err != nil {
+			t.Fatal(err)
+		}
+		if again, err := Open(path); err != nil || again.Damaged() || len(entries(again)) != 1 {
+			t.Fatalf("round %d: the new file: err=%v", round, err)
+		}
+		if want != "" {
+			if kept, _ := os.ReadFile(want); string(kept) != body {
 				t.Fatalf("the old file was not kept: %q", kept)
 			}
-			if again, err := Open(path); err != nil || again.Damaged() || len(entries(again)) != 1 {
-				t.Fatalf("the new file: err=%v", err)
-			}
-		})
+		}
+	}
+	first, _ := os.ReadFile(path + ".bak")
+	others, _ := filepath.Glob(path + ".*.bak")
+	if string(first) != body || len(others) != 1 {
+		t.Fatalf("after two rounds: first aside = %q, %d others", first, len(others))
+	}
+	if second, _ := os.ReadFile(others[0]); string(second) != body+"again" {
+		t.Fatalf("second file put aside = %q", second)
+	}
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
+		t.Fatalf("temporary files left behind: %v", left)
+	}
+}
+
+// What the file holds cannot be had again once the transcripts are gone. A
+// file that could not be read, or that a newer build wrote, is left alone.
+func TestFileThatCannotBeReadIsLeftAlone(t *testing.T) {
+	newer := `{"version":99,"sessions":{"s":{"cwd":"/a","rows":[{"day":"2026-11-12","model":"m","tokens":{"input":1}}]}}}`
+	dir := t.TempDir()
+	fromNewer := filepath.Join(dir, "newer.json")
+	if err := os.WriteFile(fromNewer, []byte(newer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notAFile := filepath.Join(dir, "folder.json")
+	if err := os.Mkdir(notAFile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"from a newer build": fromNewer, "not a file": notAFile} {
+		l, err := Open(path)
+		if err == nil || !l.Frozen() || l.Damaged() {
+			t.Fatalf("%s: err=%v frozen=%v damaged=%v", name, err, l.Frozen(), l.Damaged())
+		}
+		// The run goes on in memory, and nothing reaches the disk.
+		l.Record("s1", "/a", []Row{row("2026-11-12", "m", 1)})
+		if err := l.Save(); err != nil || len(entries(l)) != 1 {
+			t.Fatalf("%s: Save err=%v, entries=%d", name, err, len(entries(l)))
+		}
+		if _, err := os.Stat(path + ".bak"); err == nil {
+			t.Errorf("%s: the file was put aside", name)
+		}
+	}
+	if raw, _ := os.ReadFile(fromNewer); string(raw) != newer {
+		t.Fatalf("the newer build's file was changed: %q", raw)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
+		t.Fatalf("temporary files left behind: %v", left)
+	}
+}
+
+func TestSaveWritesOnlyWhatChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.json")
+	l, _ := Open(path)
+	l.Record("s1", "/a", []Row{row("2026-11-12", "m", 1)})
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Saying the same thing again is not a change.
+	l.Record("s1", "/a", []Row{row("2026-11-12", "m", 1)})
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("an unchanged ledger was written again")
+	}
+	l.Record("s1", "/a", []Row{row("2026-11-12", "m", 2)})
+	if err := l.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := os.Stat(path); err != nil || again.Size() != first.Size() {
+		t.Fatalf("after a change: %v", err)
+	}
+}
+
+func TestCountsAreBounded(t *testing.T) {
+	l, _ := Open("")
+	huge := usage.Tokens{Input: 1 << 62, Output: 1 << 62}
+	l.Record("s1", "/a", []Row{
+		{Day: "2026-11-12", Model: "m", Tokens: huge},
+		{Day: "2026-11-12", Model: "m", Tokens: huge},
+	})
+	got := entries(l)["s1"].Rows
+	if len(got) != 1 || got[0].Tokens.Input != maxCount || got[0].Tokens.Output != maxCount || got[0].Tokens.Total() <= 0 {
+		t.Fatalf("rows = %+v; a count must stay within bounds, merged or not", got)
+	}
+}
+
+func TestReadingThatMayBeIncompleteIsDoneAgain(t *testing.T) {
+	l, _ := Open("")
+	// Read in part: kept, but the session is not known yet.
+	l.Fill("s1", "/a", "", []Row{row("2026-11-03", "m", 4)})
+	if len(entries(l)["s1"].Rows) != 1 || l.Known("s1", "") || l.Known("s1", "sig") {
+		t.Fatal("a partial reading must be kept and read again")
+	}
+	// Nothing read at all, and no word on the files: nothing to remember.
+	l.Fill("s2", "/a", "", nil)
+	if _, kept := entries(l)["s2"]; kept {
+		t.Fatal("an empty partial reading was stored")
+	}
+}
+
+func TestForgetEmptyDropsWhatHasNoRowsAndNoFiles(t *testing.T) {
+	l, _ := Open("")
+	l.Fill("gone", "/a", "sig", nil)
+	l.Fill("there", "/a", "sig", nil)
+	l.Fill("gone-with-rows", "/a", "sig", []Row{row("2026-11-03", "m", 1)})
+	l.Record("board", "/a", nil)
+	l.ForgetEmpty(func(id string) bool { return id == "there" })
+	got := entries(l)
+	if _, kept := got["gone"]; kept {
+		t.Error("an empty entry whose transcript is gone was kept")
+	}
+	if _, kept := got["there"]; !kept {
+		t.Error("an empty entry whose transcript is still on disk was dropped")
+	}
+	if _, kept := got["gone-with-rows"]; !kept {
+		t.Error("history was dropped because its transcript is gone, which is what it is kept for")
 	}
 }
 

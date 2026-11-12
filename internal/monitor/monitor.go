@@ -329,8 +329,11 @@ type Service struct {
 	// closed is the sessions listed as closed in the latest snapshot, by id.
 	// Only those can be looked into after they have ended.
 	closed map[string]closedRef
-	priced priceCache
 	trail  trailCache
+	// priced has a lock of its own: a report on the history needs the price
+	// table and must not wait for a scan of the disk to finish.
+	pricedMu sync.Mutex
+	priced   priceCache
 
 	ledger *history.Ledger
 	scanMu sync.Mutex
@@ -880,8 +883,10 @@ func (b *build) record(sessionID, cwd string, merged map[parse.Key]usage.Tokens)
 }
 
 // prices returns the price table, read again only when the override file has
-// changed. The caller holds s.mu.
+// changed.
 func (s *Service) prices() (pricing.Table, error) {
+	s.pricedMu.Lock()
+	defer s.pricedMu.Unlock()
 	var mod time.Time
 	size := int64(-1)
 	if s.pricingPath != "" {
@@ -918,6 +923,12 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 	}
 	agents := len(states)
 	u, fresh := b.usage(e.Path, f, paths, states)
+	if fresh {
+		// Before anything else: a session whose last lines were written
+		// just before midnight is not at work today, and is not listed, but
+		// what it consumed yesterday must still reach the history.
+		b.record(e.SessionID, f.Cwd, u.merged)
+	}
 	parts := append([]map[parse.Key]usage.Tokens{f.Usage}, u.agents...)
 	atWorkToday := false
 	for _, part := range parts {
@@ -932,9 +943,6 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 		a, t := b.price(part, true)
 		all.add(a)
 		today.add(t)
-	}
-	if fresh {
-		b.record(e.SessionID, f.Cwd, u.merged)
 	}
 
 	ended := f.LastAt

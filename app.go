@@ -117,6 +117,7 @@ type App struct {
 	histProblem string // why the saved history could not be read at start-up
 	saveProblem string // why the history could not be saved just now
 	budget      float64
+	budgetDay   string                 // the day the limit was last said to be passed
 	targets     map[string]focusTarget // where each recent notification leads
 	notices     []Notice               // the latest things said, oldest first
 	toastWhy    string                 // why Windows will not show notifications, if it will not
@@ -150,8 +151,14 @@ func NewApp() *App {
 		chatStates: map[string]string{},
 		targets:    map[string]focusTarget{},
 	}
-	if historyErr != nil {
-		a.histProblem = "Không đọc được lịch sử chi phí đã lưu (" + clean.Text(historyErr.Error(), 200) +
+	switch {
+	case historyErr == nil:
+	case ledger.Frozen():
+		// The file may be whole and only out of reach. It is not touched.
+		a.histProblem = "Không đọc được file lịch sử chi phí (" + clean.Text(historyErr.Error(), 200) +
+			"). App để nguyên file đó và không ghi đè trong lần chạy này; lịch sử đang hiện được dựng lại từ transcript còn trên đĩa. Mở lại app để thử đọc lại."
+	default:
+		a.histProblem = "File lịch sử chi phí bị hỏng (" + clean.Text(historyErr.Error(), 200) +
 			"). Lịch sử được dựng lại từ transcript còn trên đĩa; file cũ được giữ lại dưới tên history.json.bak."
 	}
 	a.agents = agent.NewManager(a.chatChanged)
@@ -171,6 +178,9 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx, a.cancel = ctx, cancel
 	a.mu.Unlock()
+	// The history is read once the board is up; until then a page that asks
+	// is told it is on its way.
+	a.svc.AwaitBackfill()
 	go a.watch(loopCtx)
 }
 
@@ -185,7 +195,11 @@ func (a *App) shutdown(context.Context) {
 		cancel()
 	}
 	a.agents.Shutdown()
-	// What the day cost so far is kept for the next start.
+	// What the day cost so far is kept for the next start. A scan that is
+	// still running is waited for, so that nothing it records comes after
+	// the save; it announces nothing, the app being on its way out.
+	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
 	_ = a.svc.SaveHistory()
 }
 
@@ -301,6 +315,12 @@ func (a *App) decorate(snap monitor.Snapshot) monitor.Snapshot {
 func (a *App) refresh() {
 	a.refreshMu.Lock()
 	defer a.refreshMu.Unlock()
+	a.mu.Lock()
+	closing := a.closing
+	a.mu.Unlock()
+	if closing {
+		return
+	}
 	// A bug in the scan must not take the whole app down with it; the page
 	// keeps the last good snapshot and says what happened.
 	defer func() {
@@ -332,7 +352,16 @@ func (a *App) refresh() {
 		title, body := e.Text(privacy)
 		a.send(ctx, title, body, focusTarget{ProjectPath: e.ProjectPath, SessionID: e.SessionID})
 	}
-	if monitor.BudgetCrossed(prev, snap, budget) {
+	// Once a day at most: a scan that failed in between reads as a day that
+	// cost nothing, and the next good one would cross the limit again.
+	a.mu.Lock()
+	said := a.budgetDay == snap.Today
+	crossed := !said && monitor.BudgetCrossed(prev, snap, budget)
+	if crossed {
+		a.budgetDay = snap.Today
+	}
+	a.mu.Unlock()
+	if crossed {
 		a.send(ctx, "Chi phí hôm nay đã vượt ngưỡng bạn đặt",
 			fmt.Sprintf("Đã tiêu $%.2f, ngưỡng là $%.2f. Đây là số quy theo giá API.", snap.TodaySpend.CostUSD, budget), focusTarget{})
 	}
@@ -346,6 +375,11 @@ func (a *App) refresh() {
 // app forward.
 func (a *App) send(ctx context.Context, title, body string, target focusTarget) {
 	a.mu.Lock()
+	if a.closing {
+		// Nobody is left to read it, and the window is going away.
+		a.mu.Unlock()
+		return
+	}
 	a.sent++
 	id := "monitor-agent-" + strconv.Itoa(a.sent)
 	if target != (focusTarget{}) {
@@ -742,6 +776,30 @@ func (a *App) TrustProject(path string) TrustResult {
 	}
 	defer a.asking.Store(false)
 	ok, problem := a.trust(p.Dir())
+	return TrustResult{OK: ok, Problem: problem}
+}
+
+// TrustResume makes sure the session that closed today, sessionID, may be
+// opened again: it must be one that can be, and its folder one the user has
+// agreed to. The check comes first. The folder is put to the user only when
+// the session really can be carried on there, so that agreeing is never
+// asked for something that will then be refused.
+func (a *App) TrustResume(sessionID string) TrustResult {
+	if a.locked {
+		return TrustResult{Problem: lockedMessage}
+	}
+	dir, err := a.svc.Resumable(sessionID)
+	if err != nil {
+		return TrustResult{Problem: err.Error()}
+	}
+	if a.projects.Has(dir) {
+		return TrustResult{OK: true}
+	}
+	if !a.asking.CompareAndSwap(false, true) {
+		return TrustResult{}
+	}
+	defer a.asking.Store(false)
+	ok, problem := a.trust(dir)
 	return TrustResult{OK: ok, Problem: problem}
 }
 

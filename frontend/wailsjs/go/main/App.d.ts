@@ -49,3 +49,5 @@ export function SetOptions(arg1:boolean,arg2:boolean,arg3:boolean):Promise<strin
 export function StartSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.StartResult>;
 
 export function TrustProject(arg1:string):Promise<main.TrustResult>;
+
+export function TrustResume(arg1:string):Promise<main.TrustResult>;
