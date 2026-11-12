@@ -1,14 +1,19 @@
 # Agent Desk
 
-Một cửa sổ cho thấy mọi session Claude Code đang chạy trên máy: mỗi session đang làm gì, đã gọi những subagent nào, và tất cả đã tiêu bao nhiêu token, quy ra bao nhiêu tiền. Không cần hỏi từng agent "làm tới đâu rồi".
+Agent Desk là app desktop cho Windows để theo dõi mọi session Claude Code đang chạy trên máy và chat với Claude Code ngay trong app.
 
-Phần theo dõi chỉ đọc: app đọc file mà Claude Code đã ghi sẵn trên đĩa, không ghi gì vào thư mục của Claude Code và không đọc file đăng nhập. Session đang chạy trong VS Code chỉ được xem, không được ra lệnh từ đây: mỗi cuộc trò chuyện có một chỗ, và chỗ của chúng là VS Code.
+Nó dành cho người mở nhiều project trong VS Code, mỗi project một session với nhiều subagent, và phải hỏi từng agent xem việc tới đâu.
 
-Ngoài ra app tự mở được session Claude Code của riêng nó tại một project và cho bạn chat ngay trong cửa sổ này, xem mục [Mở session và chat trong app](#mở-session-và-chat-trong-app).
+- **Theo dõi.** App cho biết mỗi session và subagent đang làm gì, cỡ context, token đã tiêu và chi phí quy theo giá API niêm yết. Windows báo khi session hay agent làm xong. Phần này chỉ đọc file trong thư mục của Claude Code, không ghi gì vào đó, không đọc file đăng nhập, không gửi dữ liệu đi đâu.
+- **Làm việc.** App [tự mở session Claude Code](#mở-session-và-chat-trong-app) tại thư mục bạn đã xác nhận tin tưởng. Lệnh sửa file hiện thành diff, mỗi yêu cầu xin phép hiện đủ nội dung trước khi bạn duyệt. Session mở trong VS Code thì app chỉ xem, để không có hai nơi cùng ra lệnh.
+
+![Agent Desk theo dõi ba project, mở các bước của một agent, thêm một project, rồi mở session, giao việc và duyệt hai yêu cầu xin phép](docs/demo.gif)
+
+*Clip dùng dữ liệu mẫu. Hộp chọn thư mục của Windows ở bước thêm project được lược bớt.*
 
 ## Dùng
 
-Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và thư mục dữ liệu vẫn giữ tên `monitor-agent` để bảng giá tự chỉnh và danh sách project của bản cũ dùng tiếp được. Lần mở đầu mất vài giây vì phải đọc toàn bộ transcript; sau đó app tự quét mỗi 2 giây và chỉ đọc phần mới.
+Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và thư mục dữ liệu vẫn giữ tên `monitor-agent` để bảng giá bạn đã sửa và danh sách project của bản cũ dùng tiếp được. Lần mở đầu mất vài giây vì phải đọc toàn bộ transcript; sau đó app tự quét mỗi 2 giây và chỉ đọc phần mới.
 
 Đầu trang là một khối tổng quan:
 
@@ -31,7 +36,7 @@ Ba công tắc ở góc trên:
 | Công tắc | Tác dụng |
 |---|---|
 | **Báo khi xong** | Hiện thông báo của Windows khi một session xong lượt (đang chờ bạn) hoặc một agent làm xong. Vẫn báo khi cửa sổ đang thu nhỏ. Bấm vào thông báo để mở lại app. |
-| **Ẩn agent đã kết thúc** | Chỉ để lại agent đang chạy hoặc im lặng. |
+| **Ẩn agent đã kết thúc** | Chỉ để lại agent chưa xong: đang chạy, chờ lệnh hoặc im lặng. |
 | **Ẩn nội dung** | Giấu câu lệnh, yêu cầu và kết quả, dùng khi chia sẻ màn hình. Thông báo cũng bỏ tên session và tên agent. |
 
 Trạng thái của agent:
@@ -55,9 +60,9 @@ Hai cột token dễ nhầm:
 
 Bảng theo dõi chỉ thấy project nào đang có session Claude Code chạy. Để làm việc với một project chưa mở ở đâu cả, thêm nó vào app rồi mở session tại đó.
 
-**Thêm project.** Bấm **Thêm project** (bàn trống có dấu cộng ở cuối dãy bàn) và chọn thư mục. App hỏi một lần xem bạn có tin thư mục đó không, vì Claude Code do một chương trình khác khởi chạy sẽ không tự hỏi câu này: hook, MCP server và các quy tắc cấp quyền khai báo trong thư mục có hiệu lực ngay, kể cả quy tắc cho chạy lệnh mà không hỏi. Chỉ đồng ý với thư mục bạn tin tưởng. Project đã thêm luôn hiện trên bảng dù chưa có session; **Bỏ khỏi danh sách** gỡ nó ra mà không đụng tới thư mục. Thư mục mạng dạng `\\máy\thư-mục` chưa được hỗ trợ.
+**Thêm project.** Bấm **Thêm project** (bàn trống có dấu cộng ở cuối dãy bàn) và chọn thư mục. App hỏi một lần xem bạn có tin thư mục đó không. Claude Code do chương trình khác khởi chạy sẽ không tự hỏi câu này, nên hook, MCP server và các quy tắc cấp quyền khai báo trong thư mục có hiệu lực ngay, kể cả quy tắc cho chạy lệnh mà không hỏi. Chỉ đồng ý với thư mục bạn tin tưởng. Project đã thêm luôn hiện trên bảng dù chưa có session; **Bỏ khỏi danh sách** gỡ nó ra mà không đụng tới thư mục. Thư mục mạng dạng `\\máy\thư-mục` chưa được hỗ trợ.
 
-**Mở session.** Bấm **Session mới** ở đầu khối của project. App chỉ mở session ở thư mục bạn đã xác nhận tin tưởng: với project có trên bảng chỉ vì đang có session chạy ở đó, app hỏi câu ở trên trước, một lần, và đồng ý thì project được thêm vào danh sách. Khung bên phải hiện thư mục session sẽ chạy và file Claude Code sẽ được dùng. Chọn quyền của agent, nhập yêu cầu đầu tiên rồi Enter (Shift+Enter để xuống dòng).
+**Mở session.** Bấm **Session mới** ở đầu khối của project. App chỉ mở session ở thư mục bạn đã xác nhận tin tưởng. Nếu project chỉ hiện trên bảng vì đang có session chạy ở đó, app hỏi câu tin tưởng ở trên một lần; bạn đồng ý thì project được thêm vào danh sách. Khung bên phải hiện thư mục session sẽ chạy và file Claude Code sẽ được dùng. Chọn quyền của agent, nhập yêu cầu đầu tiên rồi Enter (Shift+Enter để xuống dòng).
 
 | Quyền | Agent được làm gì |
 |---|---|
@@ -78,7 +83,7 @@ Có một thứ app không thay bạn kiểm soát được: quy tắc `permissi
 - Nội dung dài thì phải cuộn hết mới bấm được **Cho phép**. Dài tới mức không hiện hết (trên 200 nghìn ký tự) thì thẻ nói rõ còn thiếu bao nhiêu.
 - Hai nút chỉ bấm được sau khi thẻ đứng yên khoảng nửa giây, để một cú bấm nhắm chỗ khác không rơi nhầm vào chúng.
 
-Yêu cầu nào app không đọc được thì app tự từ chối và ghi lại trong hội thoại. Nếu đang bật **Báo khi xong**, Windows cũng báo cho bạn biết có session đang chờ duyệt, và trên bảng dòng của session đó chuyển sang **Chờ bạn cho phép**.
+Yêu cầu nào app không đọc được thì app tự từ chối và ghi lại trong hội thoại. Trên bảng, dòng của session đang chờ chuyển sang **Chờ bạn cho phép**. Nếu đang bật **Báo khi xong**, Windows cũng báo cho bạn biết.
 
 **Trong lúc agent làm,** câu trả lời hiện dần theo từng chữ, và dòng cuối khung cho biết nó đang làm gì: đang suy nghĩ, đang viết, đang chạy tool nào. Mỗi lần gọi tool là một dòng, bấm vào để xem đầu vào và kết quả; lần sửa file thì mở sẵn dưới dạng diff. **Dừng lượt này** ngắt lượt đang chạy và giữ session lại để hỏi tiếp. **Kết thúc session** đóng session. **Đóng** (hoặc Esc) chỉ cất khung đi: session vẫn chạy, bấm vào dòng của nó trên bảng (hoặc nút **Mở chat**) để quay lại. Khi có nhiều session, ô chọn ở đầu khung chuyển qua lại giữa chúng.
 
@@ -87,7 +92,7 @@ Vài điều nên biết trước:
 - **Session sống cùng app.** Đóng app là kết thúc mọi session app đã mở, vì không còn ai trả lời yêu cầu xin phép của chúng. Lượt đang chạy được yêu cầu dừng trước, rồi mọi thứ session đã khởi chạy (lệnh đang chạy, MCP server, tiến trình nền) bị tắt theo. Trên Windows điều này đúng cả khi app bị tắt đột ngột. Session đã kết thúc hiện chưa mở lại được từ app.
 - **Chi phí mở session.** Mỗi session mới nạp lại system prompt, khoảng 30 nghìn token, giống hệt khi mở Claude Code trong VS Code. Quy theo giá API là khoảng 0,5 USD với Fable 5.2 và 0,1 USD với Sonnet 5.5. Chat tiếp trong session đang mở rẻ hơn nhiều so với mở session mới cho từng câu hỏi.
 - **Model và cấu hình** là của Claude Code trên máy: session dùng model mặc định, hook, MCP server và quyền đã cấp sẵn trong `~/.claude` và trong project, y như một session mở từ terminal.
-- **Khung chat không bị che** bởi công tắc **Ẩn nội dung**. Trước khi chia sẻ màn hình, hãy đóng khung chat. (Khung xem bước của agent chạy ngoài app thì có theo công tắc này.)
+- **Khung chat không bị che** bởi công tắc **Ẩn nội dung**. Trước khi chia sẻ màn hình, hãy đóng khung chat. (Khung xem bước của agent chạy ngoài app thì vẫn bị che theo công tắc này.)
 
 **App tìm Claude Code ở đâu.** Theo thứ tự: biến môi trường `MONITOR_AGENT_CLAUDE` (đường dẫn đầy đủ tới file `claude`), lệnh `claude` trong `PATH`, bản cài riêng ở `~/.local/bin`, rồi bản đi kèm extension Claude Code của VS Code và các trình soạn thảo cùng họ. Máy nào dùng được Claude Code trong VS Code thì không cần cài gì thêm. File được chọn hiện ngay trong khung **Session mới** trước khi bạn gửi yêu cầu đầu tiên; app không kiểm tra chữ ký số của file đó.
 
@@ -123,9 +128,9 @@ Transcript chứa source code, câu lệnh, và đôi khi cả mật khẩu hay 
 - **Khung xem bước của một agent** hiện nhiều hơn bảng (vài dòng cho mỗi đoạn văn và mỗi kết quả tool, khoảng 120 bước gần nhất) nhưng vẫn qua cùng bộ che ở trên, và theo công tắc **Ẩn nội dung**.
 - **Khung chat không che gì.** Thẻ xin phép hiện đủ nội dung của yêu cầu, vì thứ bạn duyệt phải là thứ bạn đã thấy; hội thoại hiện câu chữ của agent như nó viết, chỉ cắt bớt đầu vào và kết quả tool quá dài. App giữ tối đa 600 mục gần nhất của mỗi cuộc trò chuyện trong bộ nhớ và không ghi chúng ra đĩa; bản ghi đầy đủ là transcript do chính Claude Code lưu.
 - **File app tạo ra:** hồ sơ WebView2 trong `%LocalAppData%\monitor-agent`; danh sách project đã thêm trong `%AppData%\monitor-agent\projects.json`; và khi bật thông báo thì một mục đăng ký thông báo trong registry của user hiện tại. App không tự ghi gì vào `~/.claude`; session do app mở thì ghi transcript của nó vào đó như mọi session Claude Code.
-- **Session chỉ mở được ở thư mục bạn đã xác nhận.** Việc xác nhận là một hộp thoại của hệ điều hành do phần Go hiện ra, không phải của trang giao diện, và phần Go kiểm tra lại danh sách đó mỗi lần mở session. Trang giao diện cũng chỉ gọi tên được project đang hiện trên bảng.
+- **Session chỉ mở được ở thư mục bạn đã xác nhận.** Việc xác nhận là một hộp thoại của hệ điều hành do phần Go hiện ra, không phải của trang giao diện, và phần Go kiểm tra lại danh sách đó mỗi lần mở session. Trang giao diện cũng chỉ nhắm tới được project đang hiện trên bảng.
 
-Giới hạn của các lớp bảo vệ này cần nói thẳng: từ khi app mở được session, trang giao diện là bên bấm **Cho phép**. Nếu có ai chạy được mã của họ bên trong trang (điều mà chính sách chặn script lạ và việc không bao giờ dựng HTML từ chuỗi được đặt ra để ngăn), họ có thể mở session ở một thư mục bạn đã tin tưởng và tự duyệt yêu cầu của nó. Ở bản chỉ theo dõi, trường hợp xấu nhất tương ứng chỉ là lộ thứ đang hiện trên màn hình.
+Giới hạn của các lớp bảo vệ này cần nói thẳng: từ khi app mở được session, trang giao diện là bên bấm **Cho phép**. Nếu có ai chạy được mã của họ bên trong trang (chính sách chặn script lạ và việc không bao giờ dựng HTML từ chuỗi là để ngăn chuyện này), họ có thể mở session ở một thư mục bạn đã tin tưởng và tự duyệt yêu cầu của nó. Ở bản chỉ theo dõi, trường hợp xấu nhất tương ứng chỉ là lộ thứ đang hiện trên màn hình.
 
 App đọc những file sau trong thư mục cấu hình của Claude Code (`~/.claude`, hoặc `CLAUDE_CONFIG_DIR` nếu có đặt):
 
@@ -139,7 +144,7 @@ App đọc những file sau trong thư mục cấu hình của Claude Code (`~/.
 
 ## Build từ source
 
-Cần Go (bản nào cũng được, lệnh `go` tự tải đúng toolchain ghi trong `go.mod`), Node.js 18 trở lên (nên dùng bản LTS còn được hỗ trợ) và [Wails v2](https://wails.io) cùng phiên bản với `go.mod`:
+Cần Go 1.21 trở lên (lệnh `go` tự tải đúng toolchain ghi trong `go.mod`), Node.js 18 trở lên (nên dùng bản LTS còn được hỗ trợ) và [Wails v2](https://wails.io) cùng phiên bản với `go.mod`:
 
 ```
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
