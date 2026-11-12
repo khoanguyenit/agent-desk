@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "monitor-agent",
+  "outputfilename": "monitor-agent",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "khoanguyenit",
+    "email": "khoanguyen.it@hotmail.com"
+  },
+  "info": {
+    "productName": "Agent Desk",
+    "productVersion": "0.2.0",
+    "copyright": "Copyright © 2026 Khoa Nguyen. https://khoabug.com/",
+    "comments": "Shows the Claude Code sessions and subagents running on this machine, with their token use and cost, and runs sessions of its own."
+  }
+}

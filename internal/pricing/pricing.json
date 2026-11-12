@@ -1,0 +1,22 @@
+{
+  "notes": "Prices are USD per million tokens, Anthropic first-party API list rates. cacheWrite5m and cacheWrite1h default to 1.25x and 2x the input price when left out. fastMultiplier applies to requests the transcript marks as fast mode. Models with verified=true reproduce the costs Claude Code itself recorded, to the last digit; the others use published input/output prices with an assumed cache-read rate.",
+  "asOf": "2026-11-03",
+  "webSearchUsd": 0.01,
+  "models": {
+    "claude-fable-5-2":  { "input": 8,    "output": 40,   "cacheRead": 0.20, "fastMultiplier": 2, "verified": true },
+    "claude-mythos-5-2": { "input": 8,    "output": 40,   "cacheRead": 0.20, "fastMultiplier": 2 },
+    "claude-fable-5-1":  { "input": 10,   "output": 50,   "cacheRead": 0.25, "verified": true },
+    "claude-mythos-5-1": { "input": 10,   "output": 50,   "cacheRead": 0.25 },
+    "claude-fable-5":    { "input": 10,   "output": 50,   "cacheRead": 0.25 },
+    "claude-opus-5-5":   { "input": 4,    "output": 20,   "cacheRead": 0.20, "fastMultiplier": 2, "verified": true },
+    "claude-opus-5":     { "input": 5,    "output": 25,   "cacheRead": 0.50, "fastMultiplier": 2 },
+    "claude-opus-4-8":   { "input": 5,    "output": 25,   "cacheRead": 0.50, "fastMultiplier": 2, "verified": true },
+    "claude-opus-4-7":   { "input": 5,    "output": 25,   "cacheRead": 0.50 },
+    "claude-opus-4-6":   { "input": 5,    "output": 25,   "cacheRead": 0.50 },
+    "claude-sonnet-5-5": { "input": 2,    "output": 10,   "cacheRead": 0.10, "verified": true },
+    "claude-sonnet-5":   { "input": 2,    "output": 10,   "cacheRead": 0.20 },
+    "claude-sonnet-4-6": { "input": 3,    "output": 15,   "cacheRead": 0.30 },
+    "claude-haiku-5-5":  { "input": 0.10, "output": 0.50, "cacheRead": 0.01, "verified": true },
+    "claude-haiku-4-5":  { "input": 1,    "output": 5,    "cacheRead": 0.10 }
+  }
+}

@@ -1,0 +1,2450 @@
+/*
+ * Agent Desk
+ *
+ * The page is a dispatcher's strip board: each project is a bay, and every
+ * session and agent in it is a strip on one shared set of columns. A strip
+ * that is still working is raised and carries a coloured tab; one that has
+ * finished lies flat, lower and quieter.
+ *
+ * Colour roles
+ *   --s1..--s4  the four token categories (categorical, fixed order; validated
+ *               for colour-blind separation on --page in both themes)
+ *   --live      something is working right now
+ *   --warn      something has gone quiet and may be stuck
+ * Text never takes a data colour: identity comes from the mark beside it.
+ *
+ * The top of the page is an overview in two halves: on the left who is at
+ * work (a one-line caption over the floor, a desk per project), on the right
+ * what it costs (the meter). Below it the board has a single heading row that
+ * stays in view, and over the pulses that row is a 30-minute time axis.
+ *
+ * Type sizes: 11.5 (labels) · 12.5 (data, secondary) · 13.5 (body) ·
+ * 16 (session title, desk) · 21 (quiet project) · 27 (project) · 30 (caption,
+ * money). Spacing is in steps of 4.
+ */
+
+:root {
+    color-scheme: light;
+
+    --font-body: "Be Vietnam Pro", system-ui, "Segoe UI", sans-serif;
+    --font-display: "Big Shoulders Display", "Be Vietnam Pro", system-ui, sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+    --page: #eef1f6;
+    --raised: #ffffff;
+    --ink: #131722;
+    --ink-2: #454e60;
+    --ink-3: #5d687b;
+    --line: rgba(19, 23, 34, 0.10);
+    --line-2: rgba(19, 23, 34, 0.22);
+    --accent: #2a78d6;
+    /* Status marks are stepped per theme so each clears 3:1 on its surface. */
+    --live: #0b960b;
+    --warn: #b87800;
+    --warn-ink: #7a5200;
+    /* Lines put in and taken out of a file. */
+    --add: #0b7a2c;
+    --add-bg: rgba(11, 150, 11, 0.11);
+    --del: #b3261e;
+    --del-bg: rgba(200, 40, 30, 0.09);
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --s3: #1baf7a;
+    --s4: #eda100;
+    --lift: 0 1px 2px rgba(19, 23, 34, 0.07), 0 6px 16px rgba(19, 23, 34, 0.06);
+
+    /* The columns every strip shares. The pulse column is 30 bars of 5px. */
+    --cols: 124px minmax(150px, 1.15fr) minmax(150px, 1.6fr) 180px 68px 62px 62px 66px;
+    --col-gap: 16px;
+    --pulse-w: 180px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        color-scheme: dark;
+        --page: #151922;
+        --raised: #252e40;
+        --ink: #e8ecf3;
+        --ink-2: #aeb7c7;
+        --ink-3: #8b96a9;
+        --line: rgba(255, 255, 255, 0.08);
+        --line-2: rgba(255, 255, 255, 0.20);
+        --accent: #5c9ff0;
+        --live: #0ca30c;
+        --warn: #fab219;
+        --warn-ink: #fab219;
+        --add: #4cc38a;
+        --add-bg: rgba(46, 160, 67, 0.17);
+        --del: #f47067;
+        --del-bg: rgba(248, 81, 73, 0.15);
+        --s1: #3987e5;
+        --s2: #d95926;
+        --s3: #199e70;
+        --s4: #c98500;
+        --lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px rgba(0, 0, 0, 0.28);
+    }
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html {
+    background: var(--page);
+    scrollbar-color: var(--line-2) transparent;
+    scrollbar-width: thin;
+}
+
+body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, p, ul {
+    margin: 0;
+    padding: 0;
+}
+
+ul {
+    list-style: none;
+}
+
+button {
+    font: inherit;
+    color: inherit;
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+#app {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 0 24px 40px;
+}
+
+/* ---- top bar ---------------------------------------------------------------- */
+
+.top {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    flex-wrap: wrap;
+    padding: 12px 0;
+    background: var(--page);
+    border-bottom: 1px solid var(--line);
+}
+
+.brand {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+}
+
+.top-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+}
+
+.switches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+    user-select: none;
+}
+
+.switch input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* With no session open there is no list for the list switches to act on. */
+.switches.is-idle .switch:not(:first-child) {
+    display: none;
+}
+
+.stamp {
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.stamp-time {
+    font-family: var(--font-data);
+    font-variant-numeric: tabular-nums;
+}
+
+.stamp.is-stale {
+    color: var(--warn-ink);
+}
+
+/* ---- the overview: caption and floor on the left, meter on the right ------- */
+
+/* On the left the caption over the floor, on the right the money; the desks
+   and the till rest on the same line. Under them the cost by kind of token
+   runs the full width. */
+.overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 372px);
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+        "lead  money"
+        "floor money"
+        "mix   mix";
+    column-gap: 40px;
+    padding: 24px 0 0;
+}
+
+.overview > .lead { grid-area: lead; }
+.overview > .floor { grid-area: floor; }
+.overview > .money { grid-area: money; }
+.overview > .mixband { grid-area: mix; }
+
+/* ---- the caption -------------------------------------------------------------- */
+
+.headline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 16px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 30px;
+    line-height: 1.1;
+    letter-spacing: 0.005em;
+}
+
+.lamp {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    margin-right: -6px;
+    border-radius: 50%;
+    background: var(--live);
+}
+
+/* The quiet count is the part that asks for attention, so it is set as
+   strongly as the rest and carries the warning mark. */
+.headline-quiet {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+}
+
+.headline-quiet .ic {
+    width: 0.5em;
+    height: 0.5em;
+    color: var(--warn);
+}
+
+/* ---- the meter ---------------------------------------------------------------- */
+
+/* The money, read like a till: two totals at the head of two columns, the
+   models itemised under them. A rule on its left separates money from people. */
+.money {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-self: end;
+    column-gap: 24px;
+    row-gap: 2px;
+    align-items: baseline;
+    min-width: 0;
+    padding-left: 28px;
+    border-left: 1px solid var(--line-2);
+}
+
+.money-title,
+.mix-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.money-title {
+    cursor: help;
+}
+
+.money-col {
+    font-size: 11.5px;
+    color: var(--ink-3);
+    text-align: right;
+}
+
+.money-col[title] {
+    cursor: help;
+}
+
+.money-sum {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 30px;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.money-tokens {
+    padding-bottom: 10px;
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* The models, itemised under the two totals. */
+.model-name {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+    font-weight: 500;
+}
+
+.model-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-cost {
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Where the money goes by kind of token, in one line under the floor and the
+   till: the bar, its key, and the way to the full tables. */
+.mixband {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    margin-top: 24px;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+}
+
+.mixband .segbar {
+    flex: 1 1 160px;
+    max-width: 340px;
+    height: 10px;
+    margin: 0;
+}
+
+.mix-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    color: var(--ink-2);
+}
+
+.mix-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    cursor: help;
+}
+
+.mix-share {
+    font-family: var(--font-data);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+}
+
+.meter-note {
+    margin-left: auto;
+    color: var(--ink-3);
+    cursor: help;
+}
+
+.meter-more {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink-2);
+    text-decoration: underline;
+    text-decoration-color: var(--line-2);
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.meter-more::after {
+    content: " \25BE";
+}
+
+.meter-more[aria-expanded="true"]::after {
+    content: " \25B4";
+}
+
+.meter-more:hover {
+    color: var(--ink);
+    text-decoration-color: currentColor;
+}
+
+.mixband .warning {
+    flex-basis: 100%;
+}
+
+/* ---- the full tables, opened from the meter -------------------------------- */
+
+.ledger {
+    padding: 24px 0 28px;
+    border-bottom: 1px solid var(--line-2);
+}
+
+.ledger-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 20px 40px;
+    align-items: start;
+}
+
+.ledger-side {
+    display: grid;
+    gap: 20px;
+    min-width: 0;
+}
+
+.block {
+    min-width: 0;
+}
+
+/* Same grammar as a bay heading, one weight down: a name with a rule under it. */
+.block-title {
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line-2);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.grid {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.grid th,
+.grid td {
+    padding: 6px 0 6px 12px;
+    text-align: right;
+    font-weight: 400;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+}
+
+.grid th.txt,
+.grid td.txt {
+    padding-left: 0;
+    text-align: left;
+}
+
+.grid thead th {
+    padding-top: 8px;
+    padding-bottom: 4px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-3);
+    vertical-align: bottom;
+}
+
+/* A heading that spans two columns: its rule runs under both, and the gap in
+   the rule shows where one group ends and the next begins. */
+.grid thead th.group {
+    border-bottom: 0;
+    padding-bottom: 4px;
+}
+
+.grid thead th.group > span {
+    display: block;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--line-2);
+    text-align: center;
+    color: var(--ink-2);
+}
+
+.grid thead th.sub {
+    font-weight: 400;
+}
+
+.grid thead th[title] {
+    cursor: help;
+}
+
+.grid td.num {
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.grid tbody th {
+    max-width: 0;
+    width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.grid tbody tr:last-child th,
+.grid tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.grid tfoot th,
+.grid tfoot td {
+    border-top: 1px solid var(--line-2);
+    border-bottom: 0;
+    padding-top: 8px;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.grid tfoot td.num {
+    font-weight: 500;
+}
+
+.row-meta {
+    margin-left: 8px;
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--ink-3);
+}
+
+.has-active {
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.unpriced {
+    margin-left: 2px;
+    font-family: var(--font-data);
+    color: var(--warn-ink);
+    cursor: help;
+}
+
+/* Cost by token category: one whole split into parts, thin, with no text.
+   The 2px gaps are the page showing through; the table below carries the
+   numbers. */
+.segbar {
+    display: flex;
+    gap: 2px;
+    height: 8px;
+    margin: 12px 0 4px;
+}
+
+.seg {
+    flex: 0 0 0;
+    min-width: 3px;
+    border-radius: 4px;
+}
+
+.seg-s1 { background: var(--s1); }
+.seg-s2 { background: var(--s2); }
+.seg-s3 { background: var(--s3); }
+.seg-s4 { background: var(--s4); }
+
+.mix-table tbody th {
+    width: auto;
+    max-width: none;
+    font-weight: 400;
+    color: var(--ink-2);
+}
+
+.mix-table .share {
+    width: 72px;
+    color: var(--ink-3);
+}
+
+.key {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.swatch {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.tag {
+    margin-left: 8px;
+    padding: 1px 6px;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--ink-3);
+}
+
+.tag-warn {
+    border-color: var(--warn);
+    color: var(--warn-ink);
+}
+
+.notes {
+    margin-top: 12px;
+    display: grid;
+    gap: 4px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.notes strong {
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.warning {
+    display: flex;
+    gap: 8px;
+    color: var(--ink-2);
+}
+
+.warning-mark {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--warn);
+    color: #0b0b0b;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+}
+
+/* ---- bays (projects) -------------------------------------------------------- */
+
+.bays {
+    margin-top: 16px;
+}
+
+.bay {
+    margin-top: 28px;
+    /* Where a desk scrolls to: clear of the top bar and the heading row. */
+    scroll-margin-top: calc(var(--top-h, 49px) + 36px);
+}
+
+.board-cols + .bay {
+    margin-top: 12px;
+}
+
+/* The board's one heading row, held under the top bar while the list scrolls. */
+.board-cols {
+    position: sticky;
+    top: var(--top-h, 49px);
+    z-index: 4;
+    padding-top: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line-2);
+    background: var(--page);
+}
+
+/* Over the pulses the heading is a time axis, its ends under the first and
+   the last bar. */
+.board-cols .axis {
+    display: flex;
+    justify-content: space-between;
+    width: var(--pulse-w);
+    font-family: var(--font-data);
+    font-size: 11px;
+    text-decoration: none;
+}
+
+.bay-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--ink);
+}
+
+.bay-name {
+    min-width: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 27px;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+}
+
+/* A project with nothing at work steps down: smaller name, a hairline. */
+.bay-head.is-idle {
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line-2);
+}
+
+.bay-head.is-idle .bay-name {
+    font-size: 21px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+/* The project name is also the way to its editor window. */
+.bay-open {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 12px;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-weight: inherit;
+    letter-spacing: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.bay-open-hint {
+    flex: none;
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--ink-3);
+}
+
+.bay-open-hint::after {
+    content: " \2197";
+}
+
+.bay-open:hover .bay-open-name,
+.bay-open:focus-visible .bay-open-name {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+}
+
+.bay-open:hover .bay-open-hint {
+    color: var(--ink);
+}
+
+.bay-sum {
+    flex: none;
+    padding-right: 12px;
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+/* ---- sessions and strips ---------------------------------------------------- */
+
+.session {
+    padding: 12px 0 8px;
+    border-bottom: 1px solid var(--line);
+}
+
+.session:last-child {
+    border-bottom: 0;
+}
+
+.strip,
+.strip-cols {
+    display: grid;
+    grid-template-columns: var(--cols);
+    grid-template-areas: "st name doing pulse time ctx spent cost";
+    column-gap: var(--col-gap);
+    align-items: center;
+    padding: 0 12px 0 13px;
+}
+
+.c-st { grid-area: st; }
+.c-name { grid-area: name; }
+.c-title { grid-area: title; }
+.c-doing { grid-area: doing; }
+.c-pulse { grid-area: pulse; }
+.c-time { grid-area: time; }
+.c-ctx { grid-area: ctx; }
+.c-spent { grid-area: spent; }
+.c-cost { grid-area: cost; }
+.c-plabel { grid-area: plabel; }
+.c-prompt { grid-area: prompt; }
+.c-dlabel { grid-area: dlabel; }
+
+.strip > *,
+.strip-cols > * {
+    min-width: 0;
+}
+
+.strip-cols {
+    padding-bottom: 4px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.strip-cols .num {
+    text-align: right;
+}
+
+.strip-cols [title]:not(.axis) {
+    cursor: help;
+    text-decoration: underline dotted var(--line-2);
+    text-underline-offset: 3px;
+}
+
+.strip-cols .axis {
+    cursor: help;
+}
+
+.strip {
+    min-height: 44px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 10px;
+    border-top: 1px solid var(--line);
+    border-left: 3px solid transparent;
+}
+
+/* A strip that is still working is lifted off the board. */
+.strip.is-running,
+.strip.is-quiet {
+    margin: 4px 0;
+    border-top-color: transparent;
+    border-radius: 6px;
+    background: var(--raised);
+    box-shadow: var(--lift);
+}
+
+.strip.is-running { border-left-color: var(--live); }
+.strip.is-quiet { border-left-color: var(--warn); }
+
+.strip.is-running + .strip:not(.is-running):not(.is-quiet),
+.strip.is-quiet + .strip:not(.is-running):not(.is-quiet) {
+    border-top-color: transparent;
+}
+
+/* A finished strip lies flat: one line, lower, in the quieter ink. */
+.strip.is-done,
+.strip.is-stopped {
+    min-height: 30px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+
+/* History steps back so the strips at work carry the board. */
+.strip.is-done .status {
+    color: var(--ink-3);
+}
+
+/* The session's own strip leads its block. Its title, last request and main
+   thread run across the text columns; its figures sit in the shared columns,
+   so they read as the block's totals. */
+.strip.lead-strip {
+    grid-template-areas:
+        "st title title pulse time ctx spent cost"
+        "plabel prompt prompt prompt . . . ."
+        "dlabel doing doing doing . . . .";
+    row-gap: 4px;
+    align-items: baseline;
+    min-height: 0;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-top: 0;
+}
+
+.lead-strip .c-pulse {
+    align-self: center;
+}
+
+.c-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+}
+
+.session-title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.session-meta {
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.c-plabel,
+.c-dlabel {
+    font-size: 11.5px;
+    white-space: nowrap;
+    color: var(--ink-3);
+}
+
+.c-prompt {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-2);
+}
+
+.c-prompt.is-hidden {
+    color: var(--ink-3);
+}
+
+/* No pulse to draw: the activity text runs on through that column. */
+.strip.no-pulse .c-doing {
+    grid-column: doing-start / pulse-end;
+}
+
+.c-name {
+    display: grid;
+    gap: 1px;
+}
+
+.agent-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.agent-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+/* A finished strip keeps to one line: its type and model move to the tooltip. */
+.strip.is-done .agent-name,
+.strip.is-stopped .agent-name {
+    font-weight: 400;
+    color: var(--ink-2);
+}
+
+.strip.is-done .agent-meta,
+.strip.is-stopped .agent-meta {
+    display: none;
+}
+
+.doing {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+    color: var(--ink-2);
+}
+
+.doing-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.doing-when {
+    flex: none;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.doing.is-empty,
+.strip.is-done .doing,
+.strip.is-stopped .doing {
+    color: var(--ink-3);
+}
+
+.tool {
+    margin-right: 8px;
+    padding: 1px 6px;
+    border: 1px solid var(--line-2);
+    border-radius: 4px;
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    color: var(--ink);
+}
+
+.strip .num {
+    display: block;
+    text-align: right;
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-2);
+}
+
+.strip .c-cost .num,
+.lead-strip .num {
+    color: var(--ink);
+}
+
+.lead-strip .c-cost .num {
+    font-weight: 500;
+}
+
+/* ---- status ----------------------------------------------------------------- */
+
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.ic {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    color: var(--ink-3);
+}
+
+.status.is-running {
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.status.is-running .ic {
+    color: var(--live);
+}
+
+.status.is-quiet {
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.status.is-quiet .ic {
+    color: var(--warn);
+}
+
+.status[title] {
+    cursor: help;
+}
+
+/* ---- the pulse -------------------------------------------------------------- */
+
+/* Activity per minute, oldest on the left. Only a running agent's bars take
+   the live colour; one that has gone quiet shows its last beats in plain ink,
+   trailing off into a flat line. */
+.pulse {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+    width: var(--pulse-w);
+    height: 24px;
+    border-bottom: 1px solid var(--ink-3);
+}
+
+.pulse i {
+    flex: 1 1 0;
+    height: 0;
+    border-radius: 1px 1px 0 0;
+    background: var(--ink-3);
+}
+
+.pulse.is-live i.on {
+    background: var(--live);
+}
+
+/* ---- folding ---------------------------------------------------------------- */
+
+.fold {
+    margin: 8px 0 0 13px;
+    padding: 4px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: transparent;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+}
+
+.fold:hover {
+    border-color: var(--ink-3);
+    color: var(--ink);
+}
+
+.fold-note {
+    padding: 8px 0 0 13px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+/* ---- empty and loading states ----------------------------------------------- */
+
+.blank {
+    margin: 12vh auto 0;
+    max-width: 520px;
+    display: grid;
+    gap: 8px;
+    text-align: center;
+    color: var(--ink-2);
+}
+
+.blank-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 27px;
+    line-height: 1.1;
+    color: var(--ink);
+}
+
+.blank .warning {
+    justify-content: center;
+    text-align: left;
+}
+
+/* ---- the credit line ---------------------------------------------------------- */
+
+/* Who made the app, under everything else and quieter than all of it. */
+.credit {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
+    margin-top: 40px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-3);
+}
+
+.credit-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink-2);
+    text-decoration: underline;
+    text-decoration-color: var(--line-2);
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.credit-link:hover {
+    color: var(--ink);
+    text-decoration-color: currentColor;
+}
+
+/* ---- narrower windows ------------------------------------------------------- */
+
+/* Still one row per strip, on tighter columns; the pulse keeps its 30 bars
+   at 4px. The overview stacks: caption, floor, then the meter as a band. */
+@media (max-width: 1120px) {
+    :root {
+        --cols: 116px minmax(140px, 1fr) minmax(150px, 1.5fr) 150px 60px 58px 58px 62px;
+        --col-gap: 12px;
+        --pulse-w: 150px;
+    }
+
+    /* The floor takes the full width; the till and the token split share
+       the row under it. */
+    .overview {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+            "lead  lead"
+            "floor floor"
+            "money mix";
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--line-2);
+    }
+
+    .money {
+        align-self: start;
+        margin-top: 24px;
+        padding: 16px 0 0;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+    }
+
+    .mixband {
+        align-self: start;
+        align-content: start;
+        padding: 16px 0 0;
+        border-bottom: 0;
+    }
+
+    .ledger-cols {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .ledger-side {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 20px 32px;
+        align-items: start;
+    }
+}
+
+/* Two rows per strip: the figures keep their columns and their headings, the
+   activity moves underneath. Below this width one row would cut names short. */
+@media (max-width: 1040px) {
+    :root {
+        --cols: 116px minmax(0, 1fr) 60px 58px 58px 62px;
+    }
+
+    .strip-cols {
+        grid-template-areas: "st name time ctx spent cost";
+    }
+
+    .strip-cols .c-doing,
+    .strip-cols .c-pulse {
+        display: none;
+    }
+
+    .strip {
+        grid-template-areas:
+            "st name time ctx spent cost"
+            ".  doing doing pulse pulse pulse";
+        row-gap: 4px;
+    }
+
+    .strip.no-pulse .c-doing {
+        grid-column: 2 / -1;
+    }
+
+    .strip.is-done,
+    .strip.is-stopped {
+        min-height: 0;
+    }
+
+    .strip.lead-strip {
+        grid-template-areas:
+            "st title time ctx spent cost"
+            "plabel prompt prompt prompt prompt prompt"
+            "dlabel doing doing pulse pulse pulse";
+    }
+
+    /* The pulse sits under the figures, flush with their right edge. */
+    .strip .c-pulse {
+        display: flex;
+        justify-content: flex-end;
+    }
+}
+
+@media (max-width: 820px) {
+    #app {
+        padding: 0 16px 32px;
+    }
+
+    .overview {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            "lead"
+            "floor"
+            "money"
+            "mix";
+    }
+
+    .headline {
+        font-size: 26px;
+    }
+
+    .ledger-side {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .bay-open-hint {
+        display: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .seg,
+    .swatch,
+    .lamp {
+        forced-color-adjust: none;
+    }
+}
+
+/* ---- the floor: one desk per project ---------------------------------------- */
+
+/* A small office drawn from the data. Each project is a desk with a figure
+   for every session and every agent still at work. A figure moves only while
+   its work is running, so the motion on the floor is the work in progress.
+   Green and amber appear only as the lamp on each laptop.
+
+   The desks stand on the bottom of the overview, level with the foot of the
+   meter beside them; the space above them is the room, not a gap. */
+
+.floor {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    align-self: end;
+    gap: 20px 28px;
+    margin-top: 24px;
+}
+
+/* Under the desk: the project's name, then what is happening there and what
+   it has cost, the cost against the desk's right end. */
+.desk {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "seats seats"
+        "name  name"
+        "meta  cost";
+    column-gap: 12px;
+    align-items: baseline;
+    flex: 0 1 auto;
+    min-width: 112px;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+/* With three desks or more they share out the row's spare width, so the floor
+   reaches the till instead of stopping short of it. One or two desks keep
+   their own width rather than stretching into long empty benches. */
+.floor:has(> .desk:nth-child(3)) > .desk {
+    flex-grow: 1;
+    /* A desk left alone on the last row stops here rather than running the
+       whole width. */
+    max-width: 300px;
+}
+
+/* The row of figures stands on the desk's edge. */
+.desk-seats {
+    grid-area: seats;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 64px;
+    padding: 0 8px;
+    border-bottom: 3px solid var(--line-2);
+}
+
+.desk.is-live .desk-seats {
+    border-bottom-color: var(--ink);
+}
+
+.desk.is-held .desk-seats {
+    border-bottom-color: var(--ink-2);
+}
+
+.desk-more {
+    align-self: center;
+    margin-left: 4px;
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.desk-name {
+    grid-area: name;
+    margin-top: 8px;
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    color: var(--ink-2);
+}
+
+.desk.is-live .desk-name,
+.desk.is-held .desk-name {
+    color: var(--ink);
+}
+
+.desk-meta {
+    grid-area: meta;
+    font-size: 11.5px;
+    white-space: nowrap;
+    color: var(--ink-3);
+}
+
+.desk-cost {
+    grid-area: cost;
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--ink-2);
+}
+
+.desk:hover .desk-name,
+.desk:focus-visible .desk-name {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+}
+
+/* Text for a screen reader only. */
+.vh {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* One seated figure: a head and shoulders behind an open laptop. */
+.worker {
+    position: relative;
+    flex: none;
+    width: 32px;
+    height: 60px;
+    color: var(--ink-2);
+}
+
+.worker.is-lead {
+    color: var(--ink);
+}
+
+/* Someone at an idle session is drawn in outline: told apart by shape, not
+   by fading, so the figure still clears 3:1 against the page. */
+.worker.is-idle {
+    color: var(--ink-3);
+}
+
+.worker.is-idle .w-head,
+.worker.is-idle .w-body {
+    border: 1.5px solid currentColor;
+    background: none;
+}
+
+.w-head {
+    position: absolute;
+    left: 9px;
+    top: 16px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.w-body {
+    position: absolute;
+    left: 4px;
+    top: 32px;
+    width: 24px;
+    height: 22px;
+    border-radius: 12px 12px 3px 3px;
+    background: currentColor;
+}
+
+.w-laptop {
+    position: absolute;
+    left: 1px;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 18px;
+    border: 1px solid var(--line-2);
+    border-bottom: 0;
+    border-radius: 4px 4px 0 0;
+    background: var(--raised);
+}
+
+.w-lamp {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ink-3);
+}
+
+.worker.is-running .w-lamp {
+    background: var(--live);
+}
+
+.worker.is-waiting .w-lamp,
+.worker.is-quiet .w-lamp {
+    background: var(--warn);
+}
+
+/* What the figure is doing, shown over its head. */
+.w-bubble {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 10px;
+}
+
+.w-typing i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--ink-2);
+    animation: typing 1.4s ease-in-out infinite;
+}
+
+.w-typing i:nth-child(2) { animation-delay: 0.18s; }
+.w-typing i:nth-child(3) { animation-delay: 0.36s; }
+
+.w-paused i {
+    width: 3px;
+    height: 10px;
+    border-radius: 1px;
+    background: var(--warn);
+}
+
+/* The typing dots are the only thing that moves. The figures themselves stay
+   still: a whole floor of them bobbing would be a restless field of motion in
+   the corner of the eye, beside an editor, all day. Neighbours type at
+   slightly different speeds so a desk does not blink in step. */
+.worker.d1 .w-typing i { animation-duration: 1.6s; }
+.worker.d2 .w-typing i { animation-duration: 1.3s; }
+.worker.d3 .w-typing i { animation-duration: 1.2s; }
+.worker.d4 .w-typing i { animation-duration: 1.5s; }
+
+/* Opacity only, so the animation runs without relayout. */
+@keyframes typing {
+    0%, 70%, 100% { opacity: 0.25; }
+    35% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .w-typing i {
+        animation: none;
+        opacity: 1;
+    }
+}
+
+@media (max-width: 820px) {
+    .floor {
+        gap: 12px 24px;
+    }
+}
+
+/* ---- small actions on the board ---------------------------------------------- */
+
+.act {
+    flex: none;
+    padding: 3px 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: transparent;
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1.45;
+    white-space: nowrap;
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.act:hover {
+    border-color: var(--ink-3);
+    background: var(--raised);
+}
+
+.act-quiet {
+    border-color: transparent;
+    font-weight: 400;
+    color: var(--ink-3);
+}
+
+.bay-acts {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* The actions of a project stay in the background until the project is
+   pointed at or reached with the keyboard: with many projects they would
+   otherwise read as a column of buttons down the right edge. */
+.bay-head .act {
+    border-color: var(--line);
+    color: var(--ink-2);
+}
+
+.bay-head:hover .act,
+.bay-head:focus-within .act {
+    border-color: var(--line-2);
+    color: var(--ink);
+}
+
+.bay-head .act-quiet {
+    border-color: transparent;
+    opacity: 0;
+}
+
+.bay:hover .act-quiet,
+.bay-head:focus-within .act-quiet {
+    opacity: 1;
+}
+
+.bay-empty {
+    padding: 12px 0 4px 13px;
+    color: var(--ink-3);
+}
+
+/* The empty place at the end of the floor: a dashed desk with a plus on it.
+   It keeps the width of one desk and never takes a share of the spare room:
+   alone on a row it would otherwise stretch into one long dashed line. */
+.floor:has(> .desk-add) > .desk.desk-add {
+    /* Written to outweigh the rule that shares spare width among desks. */
+    flex: 0 0 132px;
+}
+
+.desk-add .desk-seats {
+    justify-content: center;
+    border-bottom: 3px dashed var(--line-2);
+}
+
+.desk-plus {
+    align-self: center;
+    font-family: var(--font-display);
+    font-size: 27px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ink-3);
+}
+
+.desk-add .desk-name {
+    color: var(--ink-3);
+}
+
+.desk-add:hover .desk-plus,
+.desk-add:hover .desk-name {
+    color: var(--ink);
+}
+
+/* The desk the side panel is open on is the one the user is sitting at. */
+.desk.is-open .desk-seats {
+    border-bottom-color: var(--accent);
+}
+
+/* Someone is being waited for: the one headline that asks the reader to act. */
+.headline-asking {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--warn-ink);
+}
+
+.headline-asking .ic {
+    width: 0.5em;
+    height: 0.5em;
+    color: var(--warn);
+}
+
+/* A row opens the steps of its agent in the side panel. */
+.strip[data-open-trail],
+.strip[data-open-chat] {
+    cursor: pointer;
+}
+
+.strip[data-open-trail]:hover,
+.strip[data-open-chat]:hover {
+    background: color-mix(in srgb, var(--accent) 6%, var(--raised));
+}
+
+.strip.is-open {
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* The name in a row is the button a keyboard reaches. It looks like the text
+   it replaces: weight and colour come from the rules for that text. */
+.strip-open {
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    letter-spacing: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-title .strip-open {
+    font-weight: inherit;
+}
+
+.strip-open:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--ink-3);
+    text-underline-offset: 3px;
+}
+
+/* ---- the side panel ---------------------------------------------------------- */
+
+/* A conversation with a session this app started, or the steps of an agent
+   that runs elsewhere. It stands beside the board, under the top bar, and is
+   not part of what is redrawn on every refresh. */
+
+.chat {
+    position: fixed;
+    top: var(--top-h, 49px);
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    width: min(560px, 100%);
+    background: var(--raised);
+    border-left: 1px solid var(--line-2);
+    box-shadow: -12px 0 28px rgba(0, 0, 0, 0.14);
+}
+
+.chat[hidden],
+.chat [hidden] {
+    display: none;
+}
+
+/* With room to spare, the board moves over instead of being covered, and the
+   panel takes the full height beside it. */
+@media (min-width: 1500px) {
+    body.has-chat #app {
+        margin-right: 560px;
+    }
+
+    body.has-chat .chat {
+        top: 0;
+    }
+}
+
+/* In a narrow window a strip of board beside the panel is of no use. */
+@media (max-width: 960px) {
+    .chat {
+        /* From edge to edge of what is visible: a width in viewport units
+           would reach under the page's scrollbar. */
+        left: 0;
+        width: auto;
+        border-left: 0;
+        box-shadow: none;
+    }
+}
+
+.chat-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "heading close"
+        "actions actions";
+    align-items: start;
+    gap: 8px 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+}
+
+.chat-heading {
+    grid-area: heading;
+    min-width: 0;
+}
+
+.chat-close {
+    grid-area: close;
+}
+
+/* The name of the project, set as it is on its desk. */
+.chat-project {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    color: var(--ink-2);
+}
+
+.chat-project:empty {
+    display: none;
+}
+
+.chat-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.chat-meta {
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.chat-meta .status {
+    font-size: 12.5px;
+}
+
+.chat-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+/* Nothing to put on this row: a draft or a trail with no session to turn to. */
+.chat-actions:not(:has(> :not([hidden]))) {
+    display: none;
+}
+
+.chat-btn {
+    /* A button keeps its words on one line; the session picker beside it is
+       what gives way when the row is tight. */
+    flex: none;
+    white-space: nowrap;
+    padding: 4px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: transparent;
+    font-size: 12.5px;
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.chat-btn:hover:not(:disabled) {
+    border-color: var(--ink-3);
+}
+
+.chat-btn:disabled {
+    color: var(--ink-3);
+    cursor: default;
+}
+
+.chat-btn-quiet {
+    border-color: transparent;
+    color: var(--ink-2);
+}
+
+.chat-pick {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: var(--raised);
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+}
+
+.chat-log {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    scrollbar-color: var(--line-2) transparent;
+    scrollbar-width: thin;
+}
+
+.chat-items {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Only a note to show: it sits in the middle of the space. */
+.chat-items:has(> .chat-empty) {
+    margin: auto 0;
+}
+
+.chat-empty {
+    text-align: center;
+    color: var(--ink-3);
+}
+
+.chat-brief-path,
+.chat-brief-exe {
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+}
+
+.chat-brief-path {
+    margin-top: 2px;
+    color: var(--ink);
+}
+
+.chat-brief-with {
+    margin-top: 12px;
+    font-size: 12.5px;
+}
+
+.chat-brief-warn {
+    margin-top: 12px;
+    color: var(--warn-ink);
+}
+
+/* ---- one turn after another -------------------------------------------------- */
+
+.msg {
+    min-width: 0;
+}
+
+.msg-who {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.msg-prose {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.msg-prose + .msg-prose,
+.msg-prose + .msg-code,
+.msg-code + .msg-prose {
+    margin-top: 8px;
+}
+
+/* What was asked is set apart from what came back, and opens a new turn: the
+   space above it is wider than any space inside a turn. */
+.msg-user {
+    padding: 8px 12px;
+    border-left: 3px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border-radius: 0 6px 6px 0;
+}
+
+.msg-user:not(:first-child) {
+    margin-top: 16px;
+}
+
+.msg-agent.is-live .msg-prose:last-of-type::after {
+    content: "▍";
+    margin-left: 1px;
+    color: var(--ink-3);
+}
+
+.msg-report {
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.msg-code {
+    margin: 0;
+    padding: 8px 12px;
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--page);
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+    color: var(--ink);
+}
+
+.msg-result {
+    margin-top: 6px;
+    color: var(--ink-2);
+}
+
+.msg-result.is-error {
+    border-color: var(--warn);
+}
+
+.msg-none {
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.msg-details > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    cursor: pointer;
+    list-style: none;
+    color: var(--ink-2);
+}
+
+.msg-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+/* The mark that says the row opens. */
+.msg-details > summary::before {
+    content: "›";
+    flex: none;
+    width: 8px;
+    color: var(--ink-3);
+    transition: transform 120ms;
+}
+
+.msg-details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.msg-details > summary .tool {
+    margin-right: 0;
+}
+
+.msg-tool-line {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-data);
+    font-size: 12.5px;
+}
+
+.msg-tool-status {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.msg-tool-status.is-running {
+    color: var(--ink);
+}
+
+.msg-tool-status.is-error,
+.msg-tool-status.is-denied {
+    color: var(--warn-ink);
+}
+
+.msg-details[open] > summary {
+    margin-bottom: 6px;
+}
+
+.msg-note {
+    font-size: 12.5px;
+    text-align: center;
+    white-space: pre-wrap;
+    color: var(--ink-3);
+}
+
+.msg-note.is-error {
+    color: var(--warn-ink);
+}
+
+/* What the session is doing right now, under the last thing it did. */
+.chat-activity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.chat-dots {
+    display: inline-flex;
+    gap: 3px;
+}
+
+.chat-dots i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--live);
+    animation: chat-dot 1.2s infinite ease-in-out;
+}
+
+.chat-dots i:nth-child(2) {
+    animation-delay: 0.15s;
+}
+
+.chat-dots i:nth-child(3) {
+    animation-delay: 0.3s;
+}
+
+@keyframes chat-dot {
+    0%, 60%, 100% { opacity: 0.25; }
+    30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-dots i {
+        animation: none;
+        opacity: 1;
+    }
+
+    .msg-details > summary::before {
+        transition: none;
+    }
+}
+
+/* ---- a change to a file ------------------------------------------------------ */
+
+.diff {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--page);
+    overflow: hidden;
+}
+
+.diff-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-data);
+    font-size: 12.5px;
+}
+
+.diff-path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.diff-count {
+    flex: none;
+    display: inline-flex;
+    gap: 8px;
+}
+
+.diff-plus {
+    color: var(--add);
+}
+
+.diff-minus {
+    color: var(--del);
+}
+
+.diff-note {
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--warn-ink);
+}
+
+.diff-body {
+    max-height: 320px;
+    overflow: auto;
+    padding: 4px 0;
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    line-height: 1.5;
+    tab-size: 4;
+}
+
+.diff-line {
+    display: flex;
+    min-height: 1.5em;
+    padding-right: 12px;
+    border-left: 3px solid transparent;
+}
+
+.diff-op {
+    flex: none;
+    width: 20px;
+    text-align: center;
+    color: var(--ink-3);
+    user-select: none;
+}
+
+.diff-text {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.diff-line.is-added {
+    border-left-color: var(--add);
+    background: var(--add-bg);
+}
+
+.diff-line.is-added .diff-op {
+    color: var(--add);
+}
+
+.diff-line.is-removed {
+    border-left-color: var(--del);
+    background: var(--del-bg);
+}
+
+.diff-line.is-removed .diff-op {
+    color: var(--del);
+}
+
+.diff-line.is-same .diff-text {
+    color: var(--ink-2);
+}
+
+.diff-line.is-note .diff-text {
+    font-family: var(--font-body);
+    font-style: italic;
+    color: var(--warn-ink);
+}
+
+/* ---- a request for permission ------------------------------------------------ */
+
+/* It stops the agent until it is answered, so it is the one thing in the
+   panel that is lifted towards the reader, and tinted with the amber of
+   everything that waits. */
+.chat-pending {
+    display: grid;
+    gap: 8px;
+    max-height: 68%;
+    overflow-y: auto;
+    padding: 0 16px;
+}
+
+.chat-pending:empty {
+    display: none;
+}
+
+.permit {
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+    border-left: 3px solid var(--warn);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--warn) 9%, var(--raised));
+    box-shadow: var(--lift);
+}
+
+.permit-title {
+    font-weight: 600;
+}
+
+.permit-body {
+    display: grid;
+    gap: 8px;
+    max-height: 38vh;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+/* The box of the card is the one that scrolls: a second scrolling box inside
+   it could hide the end of what is being approved. */
+.permit-body .diff-body,
+.permit-body .msg-code {
+    max-height: none;
+    overflow: visible;
+}
+
+.permit-label {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.permit-value {
+    background: var(--raised);
+}
+
+/* What the agent says about its own request is its word, not the request. */
+.permit-claim {
+    padding-left: 10px;
+    border-left: 2px solid var(--line-2);
+    font-style: italic;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--ink-2);
+}
+
+.permit-none {
+    color: var(--ink-2);
+}
+
+.permit-warn {
+    margin-top: 8px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--warn-ink);
+}
+
+.permit-hint {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.permit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.permit-allow {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--page);
+    font-weight: 500;
+}
+
+.permit-allow:disabled {
+    border-color: var(--line-2);
+    background: transparent;
+    color: var(--ink-3);
+}
+
+/* While a card waits, the send button steps back: one filled button at a time. */
+.chat:has(.permit) .chat-send {
+    border-color: var(--line-2);
+    background: transparent;
+    color: var(--ink);
+}
+
+.chat-problem {
+    margin: 8px 16px 0;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    color: var(--warn-ink);
+}
+
+/* ---- the foot of the panel --------------------------------------------------- */
+
+.chat-over,
+.chat-readonly {
+    margin: 12px 16px 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.chat-over {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.chat-over-text {
+    margin-right: auto;
+}
+
+.chat-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: end;
+    padding: 12px 16px 16px;
+}
+
+/* Which rights the agent gets is the weightiest choice on this screen: every
+   option is laid out with what it means, none tucked in a dropdown. */
+.chat-modes {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.chat-modes legend {
+    padding: 0;
+    margin-bottom: 4px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+}
+
+.chat-mode {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 6px 8px;
+    border-left: 3px solid transparent;
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+}
+
+.chat-mode input {
+    grid-row: 1 / 3;
+    align-self: start;
+    margin: 3px 0 0;
+    accent-color: var(--accent);
+}
+
+.chat-mode-hint {
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.chat-mode:has(input:checked) {
+    border-left-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.chat-input {
+    width: 100%;
+    min-height: 56px;
+    max-height: 40vh;
+    padding: 8px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: var(--page);
+    font: inherit;
+    line-height: 1.45;
+    color: var(--ink);
+    /* The box grows with what is typed instead of being dragged. */
+    resize: none;
+    field-sizing: content;
+}
+
+.chat-send {
+    padding: 6px 16px;
+    border-color: var(--ink);
+    background: var(--ink);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--page);
+}
+
+.chat-send:disabled {
+    border-color: var(--line-2);
+    background: transparent;
+}
