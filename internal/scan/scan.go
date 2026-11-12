@@ -253,6 +253,51 @@ func isFile(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
+// Transcript is a session's main transcript as found on disk.
+type Transcript struct {
+	SessionID string
+	Path      string
+	ModTime   time.Time
+}
+
+// TranscriptsSince lists the main transcripts under configDir that were
+// written to at or after since, whether or not their session is still
+// running. It is how sessions that have ended are found: Claude Code keeps a
+// session's transcript after its process is gone and its registry entry with
+// it. Directories that cannot be read are skipped.
+func TranscriptsSince(configDir string, since time.Time) []Transcript {
+	projects := filepath.Join(configDir, "projects")
+	dirs, err := os.ReadDir(projects)
+	if err != nil {
+		return nil
+	}
+	var out []Transcript
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		dir := filepath.Join(projects, d.Name())
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			id := strings.TrimSuffix(name, ".jsonl")
+			if id == name || !e.Type().IsRegular() || !validID(id) {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.ModTime().Before(since) {
+				continue
+			}
+			out = append(out, Transcript{SessionID: id, Path: filepath.Join(dir, name), ModTime: info.ModTime()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
 // AgentFile is the transcript of one subagent.
 type AgentFile struct {
 	ID         string

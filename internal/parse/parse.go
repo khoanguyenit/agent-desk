@@ -84,7 +84,10 @@ type File struct {
 	Title      string
 	LastPrompt string
 	GitBranch  string
-	Last       Activity
+	// Cwd is the working directory the session ran in, as its lines record
+	// it. It is how a session that has ended is put back under its project.
+	Cwd  string
+	Last Activity
 	// RecordedCostUSD is the last cost Claude Code wrote for the session
 	// itself, when the transcript has one. It is kept for cross-checking.
 	RecordedCostUSD float64
@@ -144,6 +147,7 @@ func (f *File) reset() {
 	f.Title = ""
 	f.LastPrompt = ""
 	f.GitBranch = ""
+	f.Cwd = ""
 	f.Last = Activity{}
 	f.RecordedCostUSD = 0
 	f.HasRecordedCost = false
@@ -265,6 +269,7 @@ type rawLine struct {
 	UUID         string          `json:"uuid"`
 	IsSidechain  bool            `json:"isSidechain"`
 	GitBranch    string          `json:"gitBranch"`
+	Cwd          string          `json:"cwd"`
 	Message      json.RawMessage `json:"message"`
 	AITitle      string          `json:"aiTitle"`
 	LastPrompt   string          `json:"lastPrompt"`
@@ -346,6 +351,10 @@ func (f *File) consume(line []byte) {
 	}
 	if rl.GitBranch != "" {
 		f.GitBranch = clean.Text(rl.GitBranch, labelRunes)
+	}
+	if rl.Cwd != "" {
+		// The latest one: a session can be moved to another folder.
+		f.Cwd = rl.Cwd
 	}
 	switch rl.Type {
 	case "assistant":

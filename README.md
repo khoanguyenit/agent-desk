@@ -18,13 +18,14 @@ Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và t
 Đầu trang là một khối tổng quan:
 
 - **Dãy bàn làm việc** (bên trái): mỗi project một bàn, mỗi người ngồi là một việc đang diễn ra, gồm luồng chính của session và từng agent chưa xong. Người đang chạy có ba chấm nhấp nháy trên đầu và đèn laptop xanh; đang chờ thì có dấu tạm dừng màu hổ phách; session rảnh vẽ bằng nét viền. Dưới mỗi bàn là chi phí của project. Bấm vào một bàn để cuộn tới phần của project đó.
-- **Quầy chi phí** (bên phải): tổng chi phí hôm nay và tổng từ đầu các session đang mở, kèm chi phí theo từng model.
+- **Quầy chi phí** (bên phải): chi phí hôm nay và tổng chi phí của mọi session trên trang, kèm chi phí theo từng model. Session đã đóng trong hôm nay vẫn được tính, nên tắt một project không làm con số tụt xuống; xem [Chi phí được tính thế nào](#chi-phí-được-tính-thế-nào).
 - **Chi phí theo loại token:** thanh này vẽ theo tiền chứ không theo số token, vì phần lớn token là cache đọc nhưng tiền lại chia khá đều cho cache đọc, cache ghi và output.
 - **Nút "Chi tiết theo project"** mở các bảng đầy đủ: token và chi phí theo project, theo loại token, theo model.
 
 Bên dưới là bảng theo dõi:
 
 - **Mỗi project** liệt kê các session của nó, project đang có hoạt động đứng trước. Dòng đầu mỗi khối là session (luồng chính), các dòng dưới là subagent, cùng chung một bộ cột. Dòng tiêu đề cột dính ở đầu khi cuộn.
+- **Session đã đóng hôm nay** nằm cuối khối của project, mỗi session một dòng với tiêu đề và chi phí. Project không còn session nào chạy nhưng có làm việc trong hôm nay vẫn giữ chỗ trên trang cho tới hết ngày.
 - **Cột nhịp 30 phút** vẽ số sự kiện mỗi phút trên cùng một trục thời gian cho mọi dòng, nên so được agent nào dừng lúc nào.
 - **Bấm vào một dòng** (luồng chính của session hoặc một subagent) để mở khung bên phải với các bước gần đây của agent đó: nhiệm vụ được giao, từng lần gọi tool kèm kết quả, những đoạn nó viết, báo cáo cuối. Khung tự cập nhật theo transcript và chỉ để xem. Ở đây câu chữ dài được cắt bớt, chuỗi trông như mật khẩu được che, và công tắc **Ẩn nội dung** giấu hết phần chữ, chỉ để lại tên tool. Bấm lại dòng đó để đóng.
 - **Bấm vào tên project** để chuyển sang cửa sổ VS Code đang mở project đó. Lần đầu VS Code có thể hỏi xác nhận việc mở thư mục từ ứng dụng ngoài.
@@ -99,6 +100,15 @@ Vài điều nên biết trước:
 ## Chi phí được tính thế nào
 
 Chi phí là **quy đổi theo giá API niêm yết**, tính riêng cho từng loại token (input, output, cache đọc, cache ghi 5 phút, cache ghi 1 giờ) và từng model. Nếu bạn dùng gói subscription, đây không phải số tiền thực trả.
+
+Hai con số ở quầy chi phí cộng những gì:
+
+| Con số | Gồm |
+|---|---|
+| **Hôm nay** | Mọi lượt gọi API trong ngày hôm nay, của session đang mở lẫn session đã đóng. |
+| **Tổng** | Toàn bộ chi phí, từ lúc bắt đầu, của các session trên trang: session đang mở và session đã đóng nhưng có làm việc trong hôm nay. |
+
+Session đã đóng được tính lại từ transcript mà Claude Code để lại trên đĩa, nên tắt một project, hay tắt rồi mở lại app, không làm mất phần đã tiêu trong ngày. Khi có session như vậy, quầy chi phí ghi "Đã tính cả N session đã đóng hôm nay" kèm số tiền của chúng. Sang ngày mới, session đã đóng từ hôm trước rời khỏi trang và **Tổng** giảm theo: đây là tổng của những gì đang hiện, không phải tổng theo tuần hay theo tháng.
 
 Bảng giá mặc định nằm trong [internal/pricing/pricing.json](internal/pricing/pricing.json). Các model đánh dấu `verified` cho ra đúng từng số lẻ so với chi phí Claude Code tự ghi lại; các model khác dùng giá input/output công bố với giá cache-đọc giả định, và trang sẽ ghi chú "ước tính".
 
@@ -193,7 +203,8 @@ Các package trong `internal/` không phụ thuộc Wails và có test riêng.
 
 ## Giới hạn đã biết
 
-- Chỉ tính các session **đang mở**. Session đã đóng không xuất hiện, kể cả phần chi phí hôm nay của nó.
+- Trang chỉ nhìn trong phạm vi **hôm nay**: session đang mở, và session đã đóng nhưng có làm việc trong ngày. Chưa có số liệu theo tuần hay theo tháng, và session đã đóng từ những ngày trước không xuất hiện.
+- Session đã đóng chỉ hiện tiêu đề và chi phí; không mở được các bước của nó, và nếu Claude Code chưa kịp đặt tiêu đề thì dòng đó ghi "Session chưa có tiêu đề".
 - Khung chat nói chuyện với Claude Code theo cách các Agent SDK chính thức vẫn làm (JSON từng dòng qua stdin/stdout). Luồng tin nhắn có tài liệu; riêng các tin điều khiển dùng cho xin phép và ngắt lượt thì không được công bố như một giao thức cho chương trình ngoài, nên có thể đổi theo phiên bản (đã kiểm với bản 2.1.322). Nếu sau khi nâng Claude Code mà thẻ xin phép không hiện hoặc nút **Dừng lượt này** không ăn, chỗ cần xem là [internal/agent/protocol.go](internal/agent/protocol.go). Một yêu cầu xin phép mà app không đọc được thì bị app từ chối, không bao giờ được trả lời "cho phép".
 - Chỉ chat được với session do app mở. Chưa chọn được model cho session mới, và chưa mở lại được session đã kết thúc.
 - Việc tắt hết tiến trình con khi app bị tắt đột ngột dựa vào Job Object của Windows. Trên macOS và Linux, app tắt được cả nhóm tiến trình khi kết thúc session bình thường, nhưng không làm được điều đó nếu chính app bị tắt đột ngột.

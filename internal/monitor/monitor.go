@@ -151,13 +151,34 @@ type Session struct {
 	AwaitingUser bool `json:"awaitingUser"`
 }
 
-// Project groups the sessions that share a working directory.
+// ClosedSession is a session that has ended but was at work today. Its
+// transcript is still on disk, so what it spent is known, and it stays in the
+// totals: closing a project must not make its cost disappear from the day.
+type ClosedSession struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Model      string `json:"model"`
+	ModelLabel string `json:"modelLabel"`
+	GitBranch  string `json:"gitBranch"`
+	// EndedAtMs is when the last thing was written to its transcript.
+	EndedAtMs int64 `json:"endedAtMs"`
+	// Agents is how many subagents it ran; their spend is in All and Today.
+	Agents int   `json:"agents"`
+	All    Spend `json:"all"`
+	Today  Spend `json:"today"`
+}
+
+// Project groups the sessions that share a working directory. All and Today
+// take in the sessions that are running and the ones that closed today.
 type Project struct {
 	Name     string    `json:"name"`
 	Path     string    `json:"path"`
 	Sessions []Session `json:"sessions"`
-	All      Spend     `json:"all"`
-	Today    Spend     `json:"today"`
+	// Closed lists the sessions of this project that ended but were at work
+	// today, most recently ended first.
+	Closed []ClosedSession `json:"closed"`
+	All    Spend           `json:"all"`
+	Today  Spend           `json:"today"`
 	// Pinned marks a project the user added by hand. It is listed even when
 	// no session is running in it.
 	Pinned bool `json:"pinned"`
@@ -174,6 +195,7 @@ func PinnedProject(dir string) Project {
 		Name:     clean.Text(filepath.Base(filepath.Clean(dir)), labelRunes),
 		Path:     clean.Text(dir, pathRunes),
 		Sessions: []Session{},
+		Closed:   []ClosedSession{},
 		Pinned:   true,
 		dir:      dir,
 	}
@@ -208,22 +230,29 @@ type ModelRow struct {
 
 // Counts summarises how much is going on.
 type Counts struct {
-	Projects      int `json:"projects"`
-	Sessions      int `json:"sessions"`
-	BusySessions  int `json:"busySessions"`
-	Agents        int `json:"agents"`
-	RunningAgents int `json:"runningAgents"`
-	QuietAgents   int `json:"quietAgents"`
+	Projects     int `json:"projects"`
+	Sessions     int `json:"sessions"`
+	BusySessions int `json:"busySessions"`
+	// ClosedSessions counts sessions that ended but were at work today.
+	ClosedSessions int `json:"closedSessions"`
+	Agents         int `json:"agents"`
+	RunningAgents  int `json:"runningAgents"`
+	QuietAgents    int `json:"quietAgents"`
 }
 
 // Snapshot is everything the UI renders.
 type Snapshot struct {
-	GeneratedAtMs int64      `json:"generatedAtMs"`
-	Today         string     `json:"today"`
-	ConfigDir     string     `json:"configDir"`
-	Counts        Counts     `json:"counts"`
+	GeneratedAtMs int64  `json:"generatedAtMs"`
+	Today         string `json:"today"`
+	ConfigDir     string `json:"configDir"`
+	Counts        Counts `json:"counts"`
+	// All and TodaySpend cover every session on the page: the ones running
+	// now and the ones that closed today. ClosedAll and ClosedToday are the
+	// part of them that comes from the closed ones.
 	All           Spend      `json:"all"`
 	TodaySpend    Spend      `json:"todaySpend"`
+	ClosedAll     Spend      `json:"closedAll"`
+	ClosedToday   Spend      `json:"closedToday"`
 	Projects      []Project  `json:"projects"`
 	Models        []ModelRow `json:"models"`
 	PricingAsOf   string     `json:"pricingAsOf"`
@@ -265,7 +294,23 @@ type Service struct {
 	registry    scan.Registry
 	files       map[string]*fileEntry
 	metas       map[string]metaEntry
+
+	// ended is the list of transcripts written to today whose session is not
+	// running: the sessions that closed today. It is made again every so
+	// often, and at once when the set of running sessions or the day changes.
+	ended    []endedTranscript
+	endedAt  time.Time
+	endedFor string
 }
+
+type endedTranscript struct {
+	scan.Transcript
+	agents []scan.AgentFile
+}
+
+// endedRescanEvery is how often the folders are listed again for sessions
+// that have ended. Listing costs more than reading what is already known.
+const endedRescanEvery = 15 * time.Second
 
 // New creates a Service.
 func New(o Options) *Service {
@@ -392,6 +437,25 @@ func (s *Service) Snapshot() Snapshot {
 		models:  map[string]*modelAcc{},
 		tallied: map[string]bool{},
 	}
+
+	live := make(map[string]bool, len(sessions))
+	ids := make([]string, 0, len(sessions))
+	for _, rs := range sessions {
+		live[rs.SessionID] = true
+		ids = append(ids, rs.SessionID)
+	}
+	slices.Sort(ids)
+	if mark := snap.Today + "|" + strings.Join(ids, ","); mark != s.endedFor || now.Sub(s.endedAt) >= endedRescanEvery || now.Before(s.endedAt) {
+		local := now.In(s.loc)
+		midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, s.loc)
+		s.ended = s.ended[:0]
+		for _, t := range scan.TranscriptsSince(s.configDir, midnight) {
+			if !live[t.SessionID] {
+				s.ended = append(s.ended, endedTranscript{t, scan.AgentFiles(t.Path)})
+			}
+		}
+		s.endedAt, s.endedFor = now, mark
+	}
 	for _, e := range s.files {
 		e.unused++
 	}
@@ -442,6 +506,49 @@ func (s *Service) Snapshot() Snapshot {
 		}
 	}
 
+	// Sessions that closed today are added to the totals, and listed under
+	// their project, from the transcripts they left behind.
+	var closedAll, closedToday acc
+	for _, e := range s.ended {
+		if live[e.SessionID] || b.tallied[e.Path] {
+			continue
+		}
+		cs, cwd, all, today, ok := b.closed(e)
+		if !ok {
+			continue
+		}
+		b.tallied[e.Path] = true
+		key := projectKey(cwd)
+		if cwd == "" {
+			// Nothing in the transcript says where it ran: such sessions
+			// are kept together rather than their cost dropped.
+			key = unknownProject
+		}
+		p, found := byProject[key]
+		if !found {
+			p = &projectAcc{project: Project{
+				Name:     clean.Text(filepath.Base(filepath.Clean(cwd)), labelRunes),
+				Path:     clean.Text(cwd, pathRunes),
+				Sessions: []Session{},
+				dir:      cwd,
+			}}
+			if cwd == "" {
+				p.project.Name, p.project.Path = "Không rõ thư mục", ""
+			}
+			byProject[key] = p
+			order = append(order, key)
+		}
+		p.project.Closed = append(p.project.Closed, cs)
+		p.all.add(all)
+		p.today.add(today)
+		total.add(all)
+		totalToday.add(today)
+		closedAll.add(all)
+		closedToday.add(today)
+		snap.Counts.ClosedSessions++
+	}
+	snap.ClosedAll, snap.ClosedToday = closedAll.spend(), closedToday.spend()
+
 	// Forget files that have not been needed for a while.
 	for path, e := range s.files {
 		if e.unused > forgetAfter {
@@ -458,6 +565,12 @@ func (s *Service) Snapshot() Snapshot {
 	for _, key := range order {
 		p := byProject[key]
 		p.project.All, p.project.Today = p.all.spend(), p.today.spend()
+		if p.project.Closed == nil {
+			p.project.Closed = []ClosedSession{}
+		}
+		sort.SliceStable(p.project.Closed, func(i, j int) bool {
+			return p.project.Closed[i].EndedAtMs > p.project.Closed[j].EndedAtMs
+		})
 		snap.Projects = append(snap.Projects, p.project)
 	}
 	snap.Counts.Projects = len(snap.Projects)
@@ -511,6 +624,10 @@ func (s *Service) Snapshot() Snapshot {
 	}
 	return snap
 }
+
+// unknownProject is the key under which sessions with no known folder are
+// kept. It cannot be the key of a real folder.
+const unknownProject = "?unknown"
 
 func projectKey(cwd string) string {
 	k := filepath.Clean(cwd)
@@ -601,6 +718,61 @@ func ownResponses(f, main *parse.File, claimed map[string]bool) map[parse.Key]us
 		out[k] = cur
 	})
 	return out
+}
+
+// closed adds up a session that has ended, from the transcripts it left on
+// disk. ok is false when the session did nothing today: such a one is neither
+// listed nor counted, and leaves no trace in the totals per model.
+func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, today acc, ok bool) {
+	f, read := b.file(e.Path, false)
+	if !read {
+		return cs, "", all, today, false
+	}
+	parts := []map[parse.Key]usage.Tokens{f.Usage}
+	claimed := map[string]bool{}
+	agents := 0
+	for _, af := range e.agents {
+		fa, read := b.file(af.Path, true)
+		if !read {
+			continue
+		}
+		agents++
+		parts = append(parts, ownResponses(fa, f, claimed))
+	}
+	atWorkToday := false
+	for _, part := range parts {
+		for k := range part {
+			atWorkToday = atWorkToday || k.Day == b.today
+		}
+	}
+	if !atWorkToday {
+		return cs, "", all, today, false
+	}
+	for _, part := range parts {
+		a, t := b.price(part, true)
+		all.add(a)
+		today.add(t)
+	}
+
+	ended := f.LastAt
+	if ended.IsZero() {
+		ended = f.ModTime
+	}
+	cs = ClosedSession{
+		ID: e.SessionID,
+		// The title Claude Code gave it, and nothing in its place when it
+		// has none: the only other name it has is a prompt, which the
+		// switch that hides contents is there to keep off the screen.
+		Title:      f.Title,
+		Model:      f.Model,
+		ModelLabel: ModelLabel(f.Model),
+		GitBranch:  f.GitBranch,
+		EndedAtMs:  ms(ended),
+		Agents:     agents,
+		All:        all.spend(),
+		Today:      today.spend(),
+	}
+	return cs, f.Cwd, all, today, true
 }
 
 func (b *build) session(rs scan.Session) (Session, acc, acc) {

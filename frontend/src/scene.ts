@@ -83,8 +83,11 @@ function desk(p: monitor.Project, open: boolean): HTMLElement {
 
     // On screen the desk says what is happening now; the finished count is
     // history, so only a screen reader hears it.
+    // A project whose sessions have all closed keeps its desk for the day,
+    // empty: what it cost is still part of the total.
+    const closed = ((p as monitor.Project & { closed?: unknown[] }).closed ?? []).length;
     const now = [count(running, 'đang chạy'), count(held, 'đang chờ')].filter(Boolean).join(' · ')
-        || (p.sessions.length === 0 ? 'chưa có session' : 'đang rảnh');
+        || (p.sessions.length > 0 ? 'đang rảnh' : closed > 0 ? `${closed} session đã đóng` : 'chưa có session');
 
     // Who sits where changes only when work starts or stops, and the key
     // carries it: a desk is redrawn whole then, and otherwise only its cost,

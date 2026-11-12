@@ -481,29 +481,8 @@ func TestRegistryBlinkKeepsTheSession(t *testing.T) {
 	}
 }
 
-func TestEndedSessionIsForgottenAfterAGracePeriod(t *testing.T) {
-	w := fixture(t)
-	w.svc.Snapshot()
-
-	if err := os.Remove(filepath.Join(w.dir, "sessions", "100.json")); err != nil {
-		t.Fatal(err)
-	}
-	snap := w.svc.Snapshot()
-	if snap.Counts.Sessions != 2 || snap.Counts.Agents != 0 {
-		t.Fatalf("counts right after the session ended = %+v", snap.Counts)
-	}
-	// Its parser state is kept for a while in case the session comes back...
-	if len(w.svc.files) != 7 {
-		t.Fatalf("tracking %d files right after, want all 7 kept", len(w.svc.files))
-	}
-	// ...and released once it clearly has not.
-	for range forgetAfter + 1 {
-		w.svc.Snapshot()
-	}
-	if len(w.svc.files) != 1 || len(w.svc.metas) != 0 {
-		t.Fatalf("still tracking %d files and %d metas for an ended session", len(w.svc.files), len(w.svc.metas))
-	}
-}
+// What happens to a session that has ended is in closed_test.go: it stays in
+// the day's totals, and what is held for it is let go the next day.
 
 func TestSnapshotOnMachineWithoutClaudeCode(t *testing.T) {
 	svc := New(Options{

@@ -1556,6 +1556,40 @@ button {
     }
 }
 
+/* ---- sessions that closed today --------------------------------------------- */
+
+/* They are kept for what they cost, so they are drawn as a record: no accent,
+   no lift, quieter than anything still running. */
+.closed {
+    margin-top: 12px;
+}
+
+.closed-head {
+    padding: 0 0 4px 13px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.strip.is-closed {
+    background: none;
+    box-shadow: none;
+    color: var(--ink-2);
+}
+
+.strip.is-closed .agent-name {
+    font-weight: 400;
+    color: var(--ink-2);
+}
+
+/* The note under the totals that says closed sessions are in them. */
+.money-closed {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 12.5px;
+    text-align: right;
+    color: var(--ink-3);
+}
+
 /* ---- small actions on the board ---------------------------------------------- */
 
 .act {

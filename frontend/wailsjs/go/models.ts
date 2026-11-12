@@ -481,11 +481,58 @@ export namespace monitor {
 		    return a;
 		}
 	}
+	export class ClosedSession {
+	    id: string;
+	    title: string;
+	    model: string;
+	    modelLabel: string;
+	    gitBranch: string;
+	    endedAtMs: number;
+	    agents: number;
+	    all: Spend;
+	    today: Spend;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClosedSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.model = source["model"];
+	        this.modelLabel = source["modelLabel"];
+	        this.gitBranch = source["gitBranch"];
+	        this.endedAtMs = source["endedAtMs"];
+	        this.agents = source["agents"];
+	        this.all = this.convertValues(source["all"], Spend);
+	        this.today = this.convertValues(source["today"], Spend);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class Counts {
 	    projects: number;
 	    sessions: number;
 	    busySessions: number;
+	    closedSessions: number;
 	    agents: number;
 	    runningAgents: number;
 	    quietAgents: number;
@@ -499,6 +546,7 @@ export namespace monitor {
 	        this.projects = source["projects"];
 	        this.sessions = source["sessions"];
 	        this.busySessions = source["busySessions"];
+	        this.closedSessions = source["closedSessions"];
 	        this.agents = source["agents"];
 	        this.runningAgents = source["runningAgents"];
 	        this.quietAgents = source["quietAgents"];
@@ -628,6 +676,7 @@ export namespace monitor {
 	    name: string;
 	    path: string;
 	    sessions: Session[];
+	    closed: ClosedSession[];
 	    all: Spend;
 	    today: Spend;
 	    pinned: boolean;
@@ -641,6 +690,7 @@ export namespace monitor {
 	        this.name = source["name"];
 	        this.path = source["path"];
 	        this.sessions = this.convertValues(source["sessions"], Session);
+	        this.closed = this.convertValues(source["closed"], ClosedSession);
 	        this.all = this.convertValues(source["all"], Spend);
 	        this.today = this.convertValues(source["today"], Spend);
 	        this.pinned = source["pinned"];
@@ -672,6 +722,8 @@ export namespace monitor {
 	    counts: Counts;
 	    all: Spend;
 	    todaySpend: Spend;
+	    closedAll: Spend;
+	    closedToday: Spend;
 	    projects: Project[];
 	    models: ModelRow[];
 	    pricingAsOf: string;
@@ -691,6 +743,8 @@ export namespace monitor {
 	        this.counts = this.convertValues(source["counts"], Counts);
 	        this.all = this.convertValues(source["all"], Spend);
 	        this.todaySpend = this.convertValues(source["todaySpend"], Spend);
+	        this.closedAll = this.convertValues(source["closedAll"], Spend);
+	        this.closedToday = this.convertValues(source["closedToday"], Spend);
 	        this.projects = this.convertValues(source["projects"], Project);
 	        this.models = this.convertValues(source["models"], ModelRow);
 	        this.pricingAsOf = source["pricingAsOf"];

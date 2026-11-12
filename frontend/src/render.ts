@@ -93,7 +93,7 @@ interface CostParts {
 type Spend = monitor.Spend & { costParts?: CostParts };
 type Agent = monitor.Agent & { awaitingTool?: boolean };
 type Session = monitor.Session & { duplicate?: boolean; managed?: boolean; awaitingUser?: boolean };
-type Project = monitor.Project & { pinned?: boolean };
+type Project = monitor.Project & { pinned?: boolean; closed?: monitor.ClosedSession[] };
 
 // How many ended agents a session lists before the rest are folded away.
 const ENDED_SHOWN = 6;
@@ -155,7 +155,10 @@ function groupHeader(label: string, title?: string): HTMLElement {
     return h('th', {scope: 'colgroup', colspan: 2, class: 'group', title}, h('span', null, label));
 }
 
-const sinceStart = 'Cộng từ lúc mỗi session đang mở bắt đầu';
+const sinceStart = 'Cộng từ lúc bắt đầu của mỗi session trên trang: các session đang mở và các session đã đóng trong hôm nay';
+
+// The sessions of a project that ended but were at work today.
+const closedOf = (p: monitor.Project): monitor.ClosedSession[] => (p as Project).closed ?? [];
 
 function spendTable(snap: monitor.Snapshot): HTMLElement {
     const head = h('thead', null,
@@ -188,7 +191,10 @@ function spendTable(snap: monitor.Snapshot): HTMLElement {
         body.append(h('tr', null,
             h('th', {scope: 'row', class: 'txt', title: p.path},
                 h('span', {class: 'row-name'}, p.name),
-                p.sessions.length > 1 && h('span', {class: 'row-meta'}, `${p.sessions.length} session`),
+                h('span', {class: 'row-meta'}, [
+                    p.sessions.length > 1 ? `${p.sessions.length} session` : '',
+                    closedOf(p).length > 0 ? `${closedOf(p).length} đã đóng` : '',
+                ].filter(Boolean).join(' · ')),
             ),
             h('td', {class: 'num' + (active > 0 ? ' has-active' : '')}, `${active} / ${agents}`),
             tokenCell(p.today),
@@ -380,6 +386,15 @@ export function meter(snap: monitor.Snapshot, view: ViewState): HTMLElement[] {
         h('span', {class: 'money-tokens', title: `${f.tokensExact(snap.todaySpend.totalTokens)} token`}, `${f.tokens(snap.todaySpend.totalTokens)} token`),
         h('span', {class: 'money-tokens', title: `${f.tokensExact(snap.all.totalTokens)} token`}, `${f.tokens(snap.all.totalTokens)} token`),
     );
+    // A session that has ended still cost what it cost: it stays in both
+    // totals for the rest of the day, and the till says so.
+    const closedCount = snap.counts.closedSessions ?? 0;
+    if (closedCount > 0) {
+        money.append(h('span', {
+            class: 'money-closed',
+            title: `Session đã đóng nhưng có làm việc trong hôm nay vẫn được tính, đọc từ transcript còn trên đĩa. Phần của chúng: ${f.usd(snap.closedToday.costUsd)} hôm nay, ${f.usd(snap.closedAll.costUsd)} tổng.`,
+        }, `Đã tính cả ${closedCount} session đã đóng hôm nay (${f.usd(snap.closedToday.costUsd)})`));
+    }
     // Each model's two figures sit under the day's and the whole's totals.
     for (const m of snap.models) {
         const tokensNote = `${f.tokensExact(m.all.totalTokens)} token`;
@@ -678,6 +693,41 @@ function sessionBlock(s: Session, nowMs: number, view: ViewState): HTMLElement {
     return block;
 }
 
+// closedBlock lists the sessions of a project that have ended but were at
+// work today. They have nothing more to show than what they were and what
+// they cost, which is why they are here: the day's total includes them.
+function closedBlock(closed: monitor.ClosedSession[], nowMs: number): HTMLElement {
+    const list = h('ul', {class: 'strips'});
+    for (const c of closed) {
+        const meta = [
+            c.modelLabel,
+            c.gitBranch && `nhánh ${c.gitBranch}`,
+            c.agents > 0 && `${c.agents} agent`,
+            c.today.costUsd > 0 && `hôm nay ${f.usd(c.today.costUsd)}`,
+        ].filter(Boolean).join(' · ');
+        list.append(h('li', {class: 'strip is-closed no-pulse'},
+            h('div', {class: 'c-st'}, statusNode({
+                cls: 'is-done', icon: 'square', label: 'Đã đóng',
+                title: 'Session này đã kết thúc. Chi phí của nó vẫn nằm trong tổng của hôm nay.',
+            })),
+            h('div', {class: 'c-name', title: c.title},
+                h('span', {class: 'agent-name'}, c.title || 'Session chưa có tiêu đề'),
+                meta && h('span', {class: 'agent-meta'}, meta),
+            ),
+            h('div', {class: 'c-doing'}, h('div', {class: 'doing'},
+                h('span', {class: 'doing-text'}, 'Hoạt động cuối'),
+                c.endedAtMs > 0 && h('span', {class: 'doing-when', title: f.clock(c.endedAtMs)}, f.ago(c.endedAtMs, nowMs)))),
+            h('div', {class: 'c-time'}),
+            h('div', {class: 'c-ctx'}),
+            h('div', {class: 'c-spent'}, num('Đã tiêu', f.tokens(c.all.totalTokens), `${f.tokensExact(c.all.totalTokens)} token, tính cả agent của nó`)),
+            h('div', {class: 'c-cost'}, costNum(c.all)),
+        ));
+    }
+    return h('div', {class: 'closed', 'data-key': 'closed'},
+        h('p', {class: 'closed-head'}, closed.length > 1 ? `${closed.length} session đã đóng hôm nay` : 'Đã đóng hôm nay'),
+        list);
+}
+
 // liveFirst keeps the given order within each group, so rows only move when
 // something starts or stops working.
 function liveFirst<T>(items: T[], isLive: (item: T) => boolean): T[] {
@@ -719,10 +769,12 @@ export function bays(snap: monitor.Snapshot, view: ViewState): HTMLElement {
                 ),
             ),
         );
-        if (p.sessions.length === 0) {
+        const closed = closedOf(p);
+        if (p.sessions.length === 0 && closed.length === 0) {
             bay.append(h('p', {class: 'bay-empty', 'data-key': 'empty'}, 'Chưa có session nào đang chạy ở project này.'));
         }
         for (const s of liveFirst(p.sessions, sessionIsLive)) bay.append(sessionBlock(s as Session, nowMs, view));
+        if (closed.length > 0) bay.append(closedBlock(closed, nowMs));
         wrap.append(bay);
     }
     return wrap;
