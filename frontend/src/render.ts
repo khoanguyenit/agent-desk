@@ -432,8 +432,8 @@ export function meter(snap: monitor.Snapshot, view: ViewState, trend: HTMLElemen
         },
             h('span', {class: 'budget-bar', 'aria-hidden': 'true'}, fill),
             h('span', {class: 'budget-text'}, ratio >= 1
-                ? `đã vượt ngưỡng ${f.usd(view.budget)}`
-                : `${f.percent(snap.todaySpend.costUsd, view.budget)} ngưỡng ${f.usd(view.budget)}`)));
+                ? `vượt ${f.usdAxis(view.budget)}`
+                : `${f.percent(snap.todaySpend.costUsd, view.budget)} · ${f.usdAxis(view.budget)}`)));
     }
     // A session that has ended still cost what it cost: it stays in both
     // totals for the rest of the day, and the till says so.

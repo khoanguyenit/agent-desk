@@ -106,7 +106,7 @@ const costOf = (days: Day[]) => sum(days.map(d => d.spend.costUsd));
 // in what step.
 function niceAxis(max: number): { top: number; step: number } {
     if (max <= 0) return {top: 1, step: 0.5};
-    const rough = max / 3;
+    const rough = max / 5;
     const pow = Math.pow(10, Math.floor(Math.log10(rough)));
     const step = [1, 2, 2.5, 5, 10].map(m => m * pow).find(s => s >= rough) ?? 10 * pow;
     return {top: Math.ceil(max / step - 1e-9) * step, step};
@@ -140,12 +140,14 @@ function chart(days: Day[], split: Split, series: Series[], st: HistState, today
 
     const grid = h('div', {class: 'hc-grid', 'aria-hidden': 'true'});
     for (let v = 0; v <= top + 1e-9; v += step) {
-        const line = h('div', {class: 'hc-line' + (v === 0 ? ' is-base' : '')}, h('span', {class: 'hc-tick'}, f.usdAxis(v)));
+        const crowded = showBudget && Math.abs(v - budget) / top < 0.06;
+        const line = h('div', {class: 'hc-line' + (v === 0 ? ' is-base' : '')}, !crowded && h('span', {class: 'hc-tick'}, f.usdAxis(v)));
         line.style.bottom = `${(v / top) * 100}%`;
         grid.append(line);
     }
     if (showBudget) {
-        const line = h('div', {class: 'hc-line is-budget'}, h('span', {class: 'hc-budget'}, `ngưỡng ${f.usd(budget)}`));
+        const line = h('div', {class: 'hc-line is-budget'},
+            h('span', {class: 'hc-tick hc-budget', title: `Ngưỡng một ngày bạn đặt: ${f.usd(budget)}`}, f.usdAxis(budget)));
         line.style.bottom = `${(budget / top) * 100}%`;
         grid.append(line);
     }
@@ -246,7 +248,7 @@ function spark(values: number[], days: Day[], picked: string): HTMLElement {
 
 function strips(title: string, what: string, rows: Row[], days: Day[], series: Series[], colored: boolean, st: HistState, whole: number): HTMLElement {
     const slotOf = new Map(series.map(s => [s.key, s.slot]));
-    const list = h('ul', {class: 'hrows'});
+    const list = h('ul', {class: 'hrows' + (what === 'project' ? ' is-projects' : '')});
     for (const r of rows) {
         const slot = colored ? slotOf.get(r.key) ?? OTHER : '';
         list.append(h('li', {class: 'hrow'},
@@ -487,7 +489,7 @@ export function dayReadout(hist: monitor.History, st: HistState, day: string): H
     const series = seriesOf(all, st.split);
     const values = valuesOf(d, st.split, series);
     const rows = h('ul', {class: 'tip-rows'});
-    series.forEach((s, i) => {
+    series.map((s, i) => ({s, i})).reverse().forEach(({s, i}) => {
         if (values[i] <= 0) return;
         rows.append(h('li', null,
             h('span', {class: `tip-key seg-${s.slot}`, 'aria-hidden': 'true'}),

@@ -2634,17 +2634,22 @@ body[data-mode="history"] .switch:nth-child(2) {
 
 /* ---- the board's till: the limit and the last two weeks ----------------------- */
 
+/* How far today has come against the limit: it is a figure about today, and
+   stands in today's column, under it. */
 .money-budget {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    grid-column: 2;
+    display: grid;
+    gap: 3px;
+    margin-top: -6px;
     padding-bottom: 10px;
+    font-family: var(--font-data);
     font-size: 11.5px;
+    text-align: right;
     white-space: nowrap;
     color: var(--ink-3);
     cursor: help;
-    --meter: var(--accent);
+    /* The data colours are for the data. A measure is drawn in ink. */
+    --meter: var(--ink-2);
 }
 
 .money-budget.is-near { --meter: var(--warn); }
@@ -2657,7 +2662,6 @@ body[data-mode="history"] .switch:nth-child(2) {
 /* The track is the colour of the fill, lighter, so the state reads along
    the whole bar. */
 .budget-bar {
-    flex: 1 1 0;
     display: block;
     height: 4px;
     border-radius: 2px;
@@ -2728,8 +2732,10 @@ body[data-mode="history"] .switch:nth-child(2) {
     background: var(--ink-3);
 }
 
+/* Today stands out by weight, not by a colour that elsewhere means a kind
+   of token or a project. */
 .trend-bars i.is-today {
-    background: var(--accent);
+    background: var(--ink);
 }
 
 .trend-sum {
@@ -2788,12 +2794,14 @@ body[data-mode="history"] .switch:nth-child(2) {
     color: var(--ink);
 }
 
+/* The one that is on is raised and underlined in full ink, the way the tab
+   of the page on screen is. */
 .seg-btn[aria-pressed="true"] {
     position: relative;
-    border-color: var(--ink);
-    background: var(--ink);
-    font-weight: 500;
-    color: var(--page);
+    background: var(--raised);
+    box-shadow: inset 0 -2px 0 var(--ink);
+    font-weight: 600;
+    color: var(--ink);
 }
 
 .seg-btn:focus-visible {
@@ -2817,29 +2825,22 @@ body[data-mode="history"] .switch:nth-child(2) {
     padding-top: 20px;
 }
 
-/* The total of the stretch is what this page is about: it is set a size
-   above every other figure, level with the middle of the till. */
+/* The total of the stretch, said the way the board says who is at work: one
+   line in the display face, level with the middle of the till. */
 .hist-lead {
     align-self: center;
 }
 
 .hist-lead .headline {
     align-items: baseline;
-    gap: 0 16px;
+    gap: 0 12px;
 }
 
-.hist-lead .headline > span:first-child {
-    font-size: 54px;
-    line-height: 1;
-}
-
-/* The words that say what the big figure is a figure of. */
+/* The words that say what the figure is a figure of: the rest of the
+   sentence, a step quieter. */
 .headline-sub {
-    font-family: var(--font-body);
-    font-size: 16px;
-    font-weight: 500;
-    letter-spacing: 0;
-    color: var(--ink-2);
+    font-weight: 600;
+    color: var(--ink-3);
 }
 
 .headline .act {
@@ -2849,6 +2850,10 @@ body[data-mode="history"] .switch:nth-child(2) {
 
 .headline .unpriced {
     font-size: 16px;
+}
+
+.headline .act {
+    margin-left: 4px;
 }
 
 .hist-facts {
@@ -3030,15 +3035,12 @@ body[data-mode="history"] .switch:nth-child(2) {
     border-top-color: var(--warn);
 }
 
-.hc-budget {
-    position: absolute;
-    right: 0;
-    bottom: 2px;
-    padding: 0 4px;
-    background: var(--page);
-    font-size: 11px;
-    white-space: nowrap;
+/* It is named in the axis margin, a tick among the ticks, where no column
+   and no readout can cover it. */
+.hc-tick.hc-budget {
+    font-weight: 500;
     color: var(--warn-ink);
+    cursor: help;
 }
 
 .hc-cols {
@@ -3087,7 +3089,9 @@ body[data-mode="history"] .switch:nth-child(2) {
     display: flex;
     flex-direction: column-reverse;
     gap: 2px;
-    width: min(24px, calc(100% - 2px));
+    /* A column is 24px, thinner where the days are many, and somewhat wider
+       where they are so few that 24px would be a needle in its slot. */
+    width: min(40px, calc(100% - 2px), max(24px, 36%));
     min-height: 0;
     border-radius: 4px 4px 0 0;
     overflow: hidden;
@@ -3099,7 +3103,7 @@ body[data-mode="history"] .switch:nth-child(2) {
 }
 
 .seg-other {
-    background: color-mix(in srgb, var(--ink-3) 60%, var(--page));
+    background: color-mix(in srgb, var(--ink-3) 75%, var(--page));
 }
 
 .hc-stack.is-rising {
@@ -3113,8 +3117,11 @@ body[data-mode="history"] .switch:nth-child(2) {
 
 /* With a day picked, the others step back and the tables below are for that
    day. */
+/* Fainter and greyer, not only fainter: a colour that is merely dimmed
+   reads as another colour, and so as another project. */
 .hc-col.is-dimmed .hc-stack {
-    opacity: 0.32;
+    opacity: 0.45;
+    filter: saturate(0.3);
 }
 
 .hc-x {
@@ -3136,7 +3143,7 @@ body[data-mode="history"] .switch:nth-child(2) {
 }
 
 .hc-col.is-picked .hc-x {
-    box-shadow: inset 0 -2px 0 var(--accent);
+    box-shadow: inset 0 -2px 0 var(--ink);
 }
 
 .hc-legend {
@@ -3292,18 +3299,33 @@ body[data-mode="history"] .switch:nth-child(2) {
     white-space: nowrap;
 }
 
+/* A project is named here as it is on its desk. */
+.hrows.is-projects .hrow {
+    min-height: 40px;
+}
+
+.hrows.is-projects .hrow-label {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+}
+
 .hrow-none {
     padding: 12px 0;
     color: var(--ink-3);
 }
 
 /* The days of each row, on the time axis of the chart. */
+/* Drawn like the pulse of an agent on the board: same height, same line
+   under it. */
 .hspark {
     display: flex;
     align-items: flex-end;
     gap: 1px;
-    height: 20px;
-    border-bottom: 1px solid var(--line-2);
+    height: 24px;
+    border-bottom: 1px solid var(--ink-3);
 }
 
 .hspark i {
@@ -3314,7 +3336,7 @@ body[data-mode="history"] .switch:nth-child(2) {
 }
 
 .hspark i.is-picked {
-    background: var(--accent);
+    background: var(--ink);
 }
 
 .hspark-axis {
@@ -3437,6 +3459,16 @@ body[data-mode="history"] .switch:nth-child(2) {
     margin-top: 16px;
 }
 
+/* Code, a table and a quote are blocks of their own and get more room than
+   one paragraph gets from the next. */
+.msg-agent > :is(.md-pre, .md-table-wrap, .md-quote):not(:first-child) {
+    margin-top: 12px;
+}
+
+.msg-agent > :is(.md-pre, .md-table-wrap, .md-quote) + * {
+    margin-top: 12px;
+}
+
 .md-list {
     display: grid;
     gap: 4px;
@@ -3550,17 +3582,31 @@ ol.md-list {
 
 /* ---- the model of a new session ---------------------------------------------------- */
 
+/* Set like the choice of rights above it: its name on a line of its own,
+   the choice under it. */
 .chat-model-row {
     grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    display: grid;
+    justify-items: start;
+    gap: 4px;
+    margin: 4px 0;
     font-size: 12.5px;
 }
 
 .chat-model-label {
-    flex: none;
+    font-weight: 600;
     color: var(--ink-2);
+}
+
+.chat-model-row .chat-model {
+    min-width: min(280px, 100%);
+}
+
+@media (max-width: 560px) {
+    .find {
+        flex: 1 1 100%;
+        width: auto;
+    }
 }
 
 /* ---- what the app has said: the button, its list, the cards ---------------------- */
