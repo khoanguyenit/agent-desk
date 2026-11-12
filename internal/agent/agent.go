@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -91,6 +92,31 @@ var reportedModes = map[string][]string{
 }
 
 var errEnded = errors.New("session đã kết thúc")
+
+// What may be handed to Claude Code on its command line. A model name is
+// letters, digits and a few marks, and never begins like a flag; a session to
+// carry on with is named by a UUID and by nothing looser, because Claude Code
+// also accepts a session's display name there, and a name is not an identity.
+var (
+	modelPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,79}$`)
+	resumePattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
+
+// Options says how a session is started.
+type Options struct {
+	// Dir is the project folder, Prompt the first request, and Mode "ask"
+	// (the agent asks before each action that changes something),
+	// "acceptEdits" or "plan".
+	Dir    string
+	Prompt string
+	Mode   string
+	// Model asks Claude Code for a model. Empty leaves the choice to its own
+	// settings.
+	Model string
+	// Resume is the id of a session that has ended, to carry on with. Empty
+	// starts a new session.
+	Resume string
+}
 
 // Item is one entry of a session's conversation as the app shows it.
 type Item struct {
@@ -198,6 +224,12 @@ type session struct {
 	wmu   sync.Mutex
 	stdin *os.File
 
+	// wantModel is the model the user asked for, if any. claudeID is the id
+	// Claude Code gave the session when that is not the one it was asked to
+	// use.
+	wantModel string
+	claudeID  string
+
 	cmd    *exec.Cmd
 	group  *group
 	exited chan struct{}
@@ -209,9 +241,12 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	order    []string
-	notify   func(sessionID string)
-	find     func() (string, error)
-	now      func() time.Time
+	// opening holds the ids of sessions being opened again, so that the
+	// same one cannot be opened twice at once.
+	opening map[string]bool
+	notify  func(sessionID string)
+	find    func() (string, error)
+	now     func() time.Time
 
 	// endGrace is how long a session asked to end is given before its
 	// processes are stopped; quitGrace is the same when the whole app is
@@ -228,7 +263,7 @@ func NewManager(notify func(sessionID string)) *Manager {
 		notify = func(string) {}
 	}
 	return &Manager{
-		sessions: map[string]*session{}, notify: notify, find: FindClaude, now: time.Now,
+		sessions: map[string]*session{}, opening: map[string]bool{}, notify: notify, find: FindClaude, now: time.Now,
 		endGrace: 8 * time.Second, quitGrace: 3 * time.Second, drainGrace: 2 * time.Second, haltGrace: time.Second,
 	}
 }
@@ -247,7 +282,15 @@ func newID() (string, error) {
 // (the agent asks before each action that changes something), "acceptEdits"
 // or "plan". It returns the session's id.
 func (m *Manager) Start(dir, prompt, mode string) (string, error) {
-	prompt = strings.TrimSpace(prompt)
+	return m.Open(Options{Dir: dir, Prompt: prompt, Mode: mode})
+}
+
+// Open launches a session and sends it its first request: a new session, or,
+// with Options.Resume, one that has ended and is carried on under the id it
+// had. It returns the session's id.
+func (m *Manager) Open(o Options) (string, error) {
+	dir, mode := o.Dir, o.Mode
+	prompt := strings.TrimSpace(o.Prompt)
 	if prompt == "" {
 		return "", errors.New("chưa nhập yêu cầu")
 	}
@@ -258,6 +301,12 @@ func (m *Manager) Start(dir, prompt, mode string) (string, error) {
 	if mode == "" {
 		mode = "ask"
 	}
+	if o.Model != "" && !modelPattern.MatchString(o.Model) {
+		return "", errors.New("tên model không hợp lệ")
+	}
+	if o.Resume != "" && !resumePattern.MatchString(o.Resume) {
+		return "", errors.New("mã của session cần mở lại không hợp lệ")
+	}
 	if err := fsx.LocalDir(dir); err != nil {
 		return "", err
 	}
@@ -265,12 +314,37 @@ func (m *Manager) Start(dir, prompt, mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	id, err := newID()
-	if err != nil {
+
+	// A session carried on keeps its id. One this app still has a process
+	// for cannot be opened a second time; one it has seen end hands its
+	// conversation over to the new process.
+	id := strings.ToLower(o.Resume)
+	var before *session
+	if id != "" {
+		m.mu.Lock()
+		before = m.sessions[id]
+		busy := m.opening[id]
+		if !busy && before != nil {
+			before.mu.Lock()
+			busy = !before.over()
+			before.mu.Unlock()
+		}
+		if busy {
+			m.mu.Unlock()
+			return "", errors.New("session này đang mở trong app")
+		}
+		m.opening[id] = true
+		m.mu.Unlock()
+		defer func() {
+			m.mu.Lock()
+			delete(m.opening, id)
+			m.mu.Unlock()
+		}()
+	} else if id, err = newID(); err != nil {
 		return "", err
 	}
 
-	cmd := exec.Command(exe,
+	args := []string{
 		"-p",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
@@ -279,8 +353,16 @@ func (m *Manager) Start(dir, prompt, mode string) (string, error) {
 		// Permission requests come to this program over the same stream.
 		"--permission-prompt-tool", "stdio",
 		"--permission-mode", flagMode,
-		"--session-id", id,
-	)
+	}
+	if o.Resume != "" {
+		args = append(args, "--resume", id)
+	} else {
+		args = append(args, "--session-id", id)
+	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Dir = dir
 	cmd.Env = childEnv(os.Environ())
 	hideWindow(cmd)
@@ -322,11 +404,27 @@ func (m *Manager) Start(dir, prompt, mode string) (string, error) {
 		title:     clean.Text(prompt, 80),
 		state:     StateStarting,
 		mode:      mode,
+		wantModel: o.Model,
 		startedAt: m.now(),
 		cmd:       cmd,
 		stdin:     inW,
 		group:     newGroup(),
 		exited:    make(chan struct{}),
+	}
+	if before != nil {
+		// What was said before stays on screen, and the counters carry on
+		// from where they were: the page asks for what changed after the
+		// revision it holds.
+		before.mu.Lock()
+		s.items, s.seq, s.rev, s.title = slices.Clone(before.items), before.seq, before.rev, before.title
+		before.mu.Unlock()
+	}
+	if o.Resume != "" {
+		note := "Tiếp tục session đã đóng. Những gì diễn ra trước đó nằm trong transcript của Claude Code."
+		if before != nil {
+			note = "Đã mở lại session này."
+		}
+		s.add(Item{Kind: KindNotice, Text: note}, m.now())
 	}
 	if err := cmd.Start(); err != nil {
 		closeAll()
@@ -340,8 +438,10 @@ func (m *Manager) Start(dir, prompt, mode string) (string, error) {
 	errW.Close()
 
 	m.mu.Lock()
+	if _, listed := m.sessions[id]; !listed {
+		m.order = append(m.order, id)
+	}
 	m.sessions[id] = s
-	m.order = append(m.order, id)
 	m.mu.Unlock()
 
 	read := make(chan struct{})
@@ -390,11 +490,20 @@ next:
 func (m *Manager) get(id string) (*session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s, ok := m.sessions[id]
-	if !ok {
-		return nil, errors.New("không tìm thấy session này")
+	if s, ok := m.sessions[id]; ok {
+		return s, nil
 	}
-	return s, nil
+	// Claude Code may run a session under another id than the one it was
+	// asked to use. The board knows the session by that id.
+	for _, s := range m.sessions {
+		s.mu.Lock()
+		same := s.claudeID != "" && s.claudeID == id
+		s.mu.Unlock()
+		if same {
+			return s, nil
+		}
+	}
+	return nil, errors.New("không tìm thấy session này")
 }
 
 // Owns reports whether id is a session this app started.

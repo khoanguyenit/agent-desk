@@ -70,6 +70,7 @@ type wireLine struct {
 	Subtype        string          `json:"subtype"`
 	RequestID      string          `json:"request_id"`
 	Request        json.RawMessage `json:"request"`
+	SessionID      string          `json:"session_id"`
 	Model          string          `json:"model"`
 	PermissionMode string          `json:"permissionMode"`
 	Event          json.RawMessage `json:"event"`
@@ -168,6 +169,15 @@ func (s *session) consume(line []byte, now time.Time) bool {
 			s.abort = true
 			s.touch()
 			return true
+		}
+		if l.SessionID != "" && !strings.EqualFold(l.SessionID, s.id) {
+			s.claudeID = clean.Text(l.SessionID, 128)
+		}
+		// The model is the user's choice too, but a lesser one than the
+		// mode: a session on another model is said to be, not stopped.
+		if s.wantModel != "" && s.model != "" && !sameModel(s.wantModel, s.model) {
+			s.add(Item{Kind: KindNotice, Text: "Claude Code đang dùng model " + s.model + ", không phải model bạn chọn (" + s.wantModel + ")."}, now)
+			s.wantModel = ""
 		}
 		if s.state == StateStarting {
 			s.state = StateWorking
@@ -292,6 +302,20 @@ func (s *session) consume(line []byte, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// sameModel reports whether the model Claude Code says it runs is the one that
+// was asked for. What it reports may carry more than the name asked for: a
+// snapshot date after it, a context-window mark in brackets.
+func sameModel(wanted, reported string) bool {
+	plain := func(s string) string {
+		if i := strings.IndexByte(s, '['); i >= 0 {
+			s = s[:i]
+		}
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+	w, r := plain(wanted), plain(reported)
+	return w == r || strings.HasPrefix(r, w+"-") || strings.HasPrefix(w, r+"-")
 }
 
 // onControlRequest handles a request from Claude Code that expects an answer.

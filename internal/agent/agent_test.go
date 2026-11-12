@@ -629,17 +629,25 @@ func TestMain(m *testing.M) {
 
 func fakeClaude() {
 	out := func(v string) { fmt.Println(v) }
-	sessionID, mode := "", ""
+	sessionID, mode, model := "", "", "claude-test-1"
 	for i, a := range os.Args {
 		if i+1 >= len(os.Args) {
 			break
 		}
 		switch a {
-		case "--session-id":
+		case "--session-id", "--resume":
 			sessionID = os.Args[i+1]
 		case "--permission-mode":
 			mode = os.Args[i+1]
+		case "--model":
+			model = os.Args[i+1]
 		}
+	}
+	if forced := os.Getenv("AGENT_TEST_FAKE_MODEL"); forced != "" {
+		model = forced
+	}
+	if forced := os.Getenv("AGENT_TEST_FAKE_ID"); forced != "" {
+		sessionID = forced
 	}
 	// The real program reports the asking mode as "default".
 	if mode == "manual" {
@@ -648,7 +656,7 @@ func fakeClaude() {
 	if forced := os.Getenv("AGENT_TEST_FAKE_MODE"); forced != "" {
 		mode = forced
 	}
-	out(`{"type":"system","subtype":"init","session_id":"` + sessionID + `","model":"claude-test-1","permissionMode":"` + mode + `"}`)
+	out(`{"type":"system","subtype":"init","session_id":"` + sessionID + `","model":"` + model + `","permissionMode":"` + mode + `"}`)
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	for in.Scan() {
@@ -823,6 +831,119 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if err := h.m.Forget(id); err != nil || h.m.Owns(id) {
 		t.Fatalf("Forget: err=%v, still owned=%v", err, h.m.Owns(id))
+	}
+}
+
+func TestOpenRejectsWhatCouldBeReadAsAFlagOrAName(t *testing.T) {
+	m := NewManager(nil)
+	m.find = func() (string, error) { return "", fmt.Errorf("must not be reached") }
+	dir := t.TempDir()
+	for name, o := range map[string]Options{
+		"model that begins like a flag": {Dir: dir, Prompt: "hi", Mode: "ask", Model: "--dangerously-skip-permissions"},
+		"model with a space":            {Dir: dir, Prompt: "hi", Mode: "ask", Model: "sonnet --resume x"},
+		"resume by name":                {Dir: dir, Prompt: "hi", Mode: "ask", Resume: "my session"},
+		"resume that is a flag":         {Dir: dir, Prompt: "hi", Mode: "ask", Resume: "--fork-session"},
+		"resume that is nearly an id":   {Dir: dir, Prompt: "hi", Mode: "ask", Resume: "1b4e28ba-2fa1-41d2-883f-0016d3cca42"},
+	} {
+		if _, err := m.Open(o); err == nil || strings.Contains(err.Error(), "must not be reached") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if len(m.sessions) != 0 || len(m.opening) != 0 {
+		t.Fatalf("failed opens left %d sessions and %d reservations", len(m.sessions), len(m.opening))
+	}
+}
+
+func TestModelIsAskedForAndAnotherOneIsSaid(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.m.Open(Options{Dir: h.dir, Prompt: "hello", Mode: "ask", Model: "claude-sonnet-5-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
+	if v.Model != "claude-sonnet-5-5" || strings.Contains(texts(v), "không phải model bạn chọn") {
+		t.Fatalf("model = %q, conversation = %s", v.Model, texts(v))
+	}
+
+	// Claude Code settles on another model than the one asked for.
+	t.Setenv("AGENT_TEST_FAKE_MODEL", "claude-haiku-5-5-20261001")
+	id, err = h.m.Open(Options{Dir: h.dir, Prompt: "hello", Mode: "ask", Model: "claude-sonnet-5-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
+	if !strings.Contains(texts(v), "notice:Claude Code đang dùng model claude-haiku-5-5-20261001, không phải model bạn chọn (claude-sonnet-5-5).") {
+		t.Fatalf("conversation = %s", texts(v))
+	}
+}
+
+func TestSameModel(t *testing.T) {
+	for _, c := range []struct {
+		wanted, reported string
+		want             bool
+	}{
+		{"claude-sonnet-5-5", "claude-sonnet-5-5", true},
+		{"claude-sonnet-5-5", "claude-sonnet-5-5-20261001", true},
+		{"claude-fable-5-2", "claude-fable-5-2[1m]", true},
+		{"claude-sonnet-5", "claude-sonnet-5-5", true}, // a shorter name stands for its family
+		{"claude-sonnet-5-5", "claude-haiku-5-5", false},
+		{"claude-opus-5", "claude-opus-55", false},
+	} {
+		if got := sameModel(c.wanted, c.reported); got != c.want {
+			t.Errorf("sameModel(%q, %q) = %v", c.wanted, c.reported, got)
+		}
+	}
+}
+
+func TestEndedSessionIsCarriedOnUnderItsID(t *testing.T) {
+	h := newHarness(t)
+	const old = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+
+	// A session this app never ran: only its id is known.
+	id, err := h.m.Open(Options{Dir: h.dir, Prompt: "carry on", Mode: "ask", Resume: strings.ToUpper(old)})
+	if err != nil || id != old {
+		t.Fatalf("Open = %q, %v", id, err)
+	}
+	v := h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
+	if got := texts(v); !strings.HasPrefix(got, "notice:Tiếp tục session đã đóng.") || !strings.HasSuffix(got, "user:carry on | text:echo: carry on") {
+		t.Fatalf("conversation = %s", got)
+	}
+
+	// While it runs it cannot be opened a second time.
+	if _, err := h.m.Open(Options{Dir: h.dir, Prompt: "again", Mode: "ask", Resume: old}); err == nil {
+		t.Fatal("a running session was opened a second time")
+	}
+
+	// Once it has ended it can, and what was said stays on screen.
+	if err := h.m.End(id); err != nil {
+		t.Fatal(err)
+	}
+	ended := h.until(id, "the end", func(v View) bool { return v.State == StateEnded })
+	if _, err := h.m.Open(Options{Dir: h.dir, Prompt: "once more", Mode: "plan", Resume: old}); err != nil {
+		t.Fatal(err)
+	}
+	v = h.until(id, "the second answer", func(v View) bool { return v.State == StateIdle })
+	if got := texts(v); !strings.HasSuffix(got, "text:echo: carry on | notice:Đã mở lại session này. | user:once more | text:echo: once more") {
+		t.Fatalf("conversation = %s", got)
+	}
+	if v.Mode != "plan" || v.Rev <= ended.Rev {
+		t.Fatalf("mode = %q, rev %d after %d", v.Mode, v.Rev, ended.Rev)
+	}
+	if list := h.m.List(); len(list) != 1 {
+		t.Fatalf("the session is listed %d times", len(list))
+	}
+}
+
+func TestSessionRunUnderAnotherIDIsStillFound(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("AGENT_TEST_FAKE_ID", "claude-picked-this")
+	id, err := h.m.Start(h.dir, "hello", "ask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.until(id, "the answer", func(v View) bool { return v.State == StateIdle })
+	if h.m.State("claude-picked-this") != StateIdle || !h.m.Owns(id) || h.m.State("someone-else") != "" {
+		t.Fatalf("State by Claude Code's id = %q", h.m.State("claude-picked-this"))
 	}
 }
 
