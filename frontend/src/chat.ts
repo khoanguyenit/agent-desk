@@ -1,6 +1,6 @@
 import {
     AnswerPermission, EndSession, ForgetSession, GetChat, GetClaude, GetModels, GetTrail, InterruptSession, ListChats,
-    ResumeSession, SendChat, StartSession, TrustProject,
+    ResumeSession, SendChat, StartSession, TrustResume,
 } from '../wailsjs/go/main/App';
 import {agent, monitor} from '../wailsjs/go/models';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -475,11 +475,17 @@ function rearm(card: HTMLElement): void {
     const stamp = String(Date.now());
     card.dataset.armStamp = stamp;
     armCard(card);
-    window.setTimeout(() => {
-        if (card.dataset.armStamp !== stamp || !card.isConnected) return;
-        card.dataset.armed = '1';
-        armCard(card);
-    }, ARM_MS);
+    // The wait is counted from when the card has been drawn, not from when
+    // it was made: if the page was busy in between, a wait counted from the
+    // making could be over before the card was ever on screen. Two frames,
+    // because the first callback runs before the frame that paints it.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        window.setTimeout(() => {
+            if (card.dataset.armStamp !== stamp || !card.isConnected) return;
+            card.dataset.armed = '1';
+            armCard(card);
+        }, ARM_MS);
+    }));
 }
 
 function drawPending(): void {
@@ -978,7 +984,7 @@ function carryOn(sessionId: string): void {
         if (showing === 'trail') trailProblem = text;
         draw();
     };
-    TrustProject(found.project.path).then(res => {
+    TrustResume(sessionId).then(res => {
         if (asked !== gen) return;
         if (!res.ok) {
             said(res.problem);

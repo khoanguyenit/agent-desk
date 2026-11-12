@@ -328,6 +328,11 @@ function till(all: Day[], today: string, firstDay: string, budget: number): HTML
     const monthStart = today.slice(0, 8) + '01';
     const lastMonthEnd = shift(monthStart, -1);
     const lastMonthStart = lastMonthEnd.slice(0, 8) + '01';
+    // A week or a month that is not over is measured against the same days
+    // of the one before: Monday to Wednesday against Monday to Wednesday.
+    // Against the whole of it, every unfinished period would look cheap.
+    const sameDayLastMonth = lastMonthStart.slice(0, 8) + today.slice(8, 10);
+    const lastMonthTo = sameDayLastMonth > lastMonthEnd ? lastMonthEnd : sameDayLastMonth;
     const todayCost = costOf(between(all, today, today));
 
     // A period the history does not reach back over has no figure to give.
@@ -340,10 +345,10 @@ function till(all: Day[], today: string, firstDay: string, budget: number): HTML
     const figures = h('div', {class: 'hm-grid', 'data-key': 'figures'},
         h('h2', {class: 'money-title', title: 'Chi phí quy đổi theo giá API. Nếu bạn dùng gói subscription, đây không phải số tiền thực trả.'}, 'Chi phí theo kỳ'),
         ...line('Hôm nay', todayCost, 'hôm qua', known(shift(today, -1)) ? costOf(between(all, shift(today, -1), shift(today, -1))) : null),
-        ...line('Tuần này', costOf(between(all, monday, today)), 'tuần trước',
-            known(shift(monday, -7)) ? costOf(between(all, shift(monday, -7), shift(monday, -1))) : null),
-        ...line(`Tháng ${Number(today.slice(5, 7))}`, costOf(between(all, monthStart, today)), f.monthLabel(lastMonthStart),
-            known(lastMonthStart) ? costOf(between(all, lastMonthStart, lastMonthEnd)) : null),
+        ...line('Tuần này', costOf(between(all, monday, today)), 'cùng kỳ tuần trước',
+            known(shift(monday, -7)) ? costOf(between(all, shift(monday, -7), shift(today, -7))) : null),
+        ...line(`Tháng ${Number(today.slice(5, 7))}`, costOf(between(all, monthStart, today)), `cùng kỳ ${f.monthLabel(lastMonthStart)}`,
+            known(lastMonthStart) ? costOf(between(all, lastMonthStart, lastMonthTo)) : null),
     );
 
     // The daily limit is set here, where the days are; the board's till
@@ -370,10 +375,16 @@ export function historyView(hist: monitor.History | null, st: HistState, problem
     }
     const all = hist.days ?? [];
     const scan = hist.scan;
-    const scanning = scan.running && scan.total > 0;
+    const scanning = scan.running;
     const scanNote = scanning && h('p', {class: 'hist-scan', 'data-key': 'scan', role: 'status'},
         h('span', {class: 'lamp', 'aria-hidden': 'true'}),
-        `Đang đọc transcript của những ngày trước: ${scan.done} / ${scan.total} session. Số liệu đầy dần lên.`);
+        scan.total > 0
+            ? `Đang đọc transcript của những ngày trước: ${scan.done} / ${scan.total} session. Số liệu đầy dần lên.`
+            : 'Đang tìm transcript của những ngày trước.');
+    // A fetch that failed leaves the last good figures on screen, and says so.
+    const stale = problem !== '' && h('p', {class: 'warning hist-problem', 'data-key': 'stale'},
+        h('span', {class: 'warning-mark', 'aria-hidden': 'true'}, '!'),
+        `Không cập nhật được lịch sử, đang hiện số liệu đã đọc trước đó: ${problem}`);
 
     if (hist.firstDay === '' || all.length === 0) {
         return h('div', {class: 'history', 'data-key': 'history', 'data-container': true},
@@ -446,6 +457,7 @@ export function historyView(hist: monitor.History | null, st: HistState, problem
     const shownSplit: 'project' | 'model' = st.split === 'model' ? 'model' : 'project';
     const whole = picked ? picked.spend.costUsd : total;
     const view = h('div', {class: 'history', 'data-key': 'history', 'data-container': true},
+        stale,
         filters,
         h('div', {class: 'overview hist-over', 'data-key': 'over', 'data-container': true}, lead, till(all, hist.today, hist.firstDay, budget)),
         scanNote,
