@@ -120,11 +120,37 @@ function desk(p: monitor.Project, open: boolean): HTMLElement {
     );
 }
 
-export function floor(snap: monitor.Snapshot, openProject: string): HTMLElement {
-    const live = snap.projects.filter(p => p.sessions.some(sessionIsLive));
-    const rest = snap.projects.filter(p => !p.sessions.some(sessionIsLive));
+// place stands a desk on the floor with the one thing that acts on the desk
+// itself: taking it off the board, or putting it back. A desk is a button
+// already, and a button cannot hold another, so the two share a box.
+function place(p: monitor.Project, open: boolean, put: 'shown' | 'away'): HTMLElement {
+    const act = put === 'away'
+        ? h('button', {
+            type: 'button', class: 'desk-x desk-back', 'data-key': 'x', 'data-show-project': p.path, 'data-fkey': `show-${p.path}`,
+            title: `Hiện lại ${p.name} trên bảng`,
+        }, 'Hiện lại')
+        : h('button', {
+            type: 'button', class: 'desk-x', 'data-key': 'x', 'data-hide-project': p.path, 'data-fkey': `hide-${p.path}`,
+            title: `Ẩn ${p.name} khỏi bảng. Chi phí của nó vẫn nằm trong tổng, thông báo vẫn đến; hiện lại ở cuối dãy bàn.`,
+            'aria-label': `Ẩn ${p.name} khỏi bảng`,
+        }, '×');
+    // The box is kept between drawings, so what it is goes in its key.
+    return h('div', {class: 'desk-slot' + (put === 'away' ? ' is-away' : ''), 'data-key': `slot:${p.path}:${put}`, 'data-container': true},
+        desk(p, open), act);
+}
+
+/**
+ * The floor. hidden holds the projects the user took off the board; they are
+ * left out unless showHidden asks for them, to be put back one by one.
+ */
+export function floor(snap: monitor.Snapshot, openProject: string, hidden: Set<string>, showHidden: boolean): HTMLElement {
+    const shown = snap.projects.filter(p => !hidden.has(p.path));
+    const away = snap.projects.filter(p => hidden.has(p.path));
+    const live = shown.filter(p => p.sessions.some(sessionIsLive));
+    const rest = shown.filter(p => !p.sessions.some(sessionIsLive));
     const el = h('section', {class: 'floor', 'data-key': 'floor', 'data-container': true, 'aria-label': 'Các project đang mở'});
-    for (const p of [...live, ...rest]) el.append(desk(p, p.path === openProject));
+    for (const p of [...live, ...rest]) el.append(place(p, p.path === openProject, 'shown'));
+    if (showHidden) for (const p of away) el.append(place(p, false, 'away'));
     // An empty place at the end of the floor: where the next project goes.
     el.append(h('button', {
         type: 'button', class: 'desk desk-add', 'data-key': 'desk:add', 'data-add-project': true, 'data-fkey': 'add-project',
@@ -134,5 +160,17 @@ export function floor(snap: monitor.Snapshot, openProject: string): HTMLElement 
         h('span', {class: 'desk-name'}, 'Thêm project'),
         h('span', {class: 'desk-meta'}, 'chọn một thư mục'),
     ));
+    // What was taken off the board is said, with how much of it is at work:
+    // a hidden project must not be a forgotten one.
+    if (away.length > 0) {
+        const working = away.filter(p => p.sessions.some(sessionIsLive)).length;
+        el.append(h('button', {
+            type: 'button', class: 'desk-away', 'data-key': `away:${away.length}:${working}:${showHidden}`,
+            'data-toggle-hidden': true, 'data-fkey': 'toggle-hidden', 'aria-expanded': String(showHidden),
+            title: 'Project bạn đã ẩn khỏi bảng. Chi phí của chúng vẫn nằm trong các con số tổng.',
+        },
+            showHidden ? 'Cất các project đang ẩn' : `${away.length} project đang ẩn`,
+            working > 0 && !showHidden && h('span', {class: 'desk-away-live'}, `${working} đang chạy`)));
+    }
     return el;
 }

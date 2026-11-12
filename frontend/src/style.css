@@ -1332,11 +1332,92 @@ button {
 /* With three desks or more they share out the row's spare width, so the floor
    reaches the till instead of stopping short of it. One or two desks keep
    their own width rather than stretching into long empty benches. */
-.floor:has(> .desk:nth-child(3)) > .desk {
+.floor:has(> :nth-child(3)) > .desk-slot {
     flex-grow: 1;
     /* A desk left alone on the last row stops here rather than running the
        whole width. */
     max-width: 300px;
+}
+
+/* A desk and the one thing that acts on the desk itself share a box: the
+   desk is a button, and a button cannot hold another. */
+.desk-slot {
+    position: relative;
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 112px;
+}
+
+.desk-slot > .desk {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Taking a project off the board stays out of the way until the desk is
+   pointed at or reached with the keyboard. */
+.desk-x {
+    position: absolute;
+    top: 0;
+    right: 0;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: var(--page);
+    font-size: 14px;
+    line-height: 1;
+    color: var(--ink-2);
+    opacity: 0;
+    cursor: pointer;
+}
+
+.desk-slot:hover .desk-x,
+.desk-x:focus-visible {
+    opacity: 1;
+}
+
+.desk-x:hover {
+    border-color: var(--ink-3);
+    background: var(--raised);
+    color: var(--ink);
+}
+
+/* A project that was taken off the board, shown again for a moment so it can
+   be put back: drawn fainter, with the way back always in sight. */
+.desk-slot.is-away > .desk {
+    opacity: 0.45;
+}
+
+.desk-back {
+    font-size: 11.5px;
+    opacity: 1;
+}
+
+/* How many are off the board, at the end of the floor. */
+.desk-away {
+    align-self: flex-end;
+    display: grid;
+    gap: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 11.5px;
+    text-align: left;
+    color: var(--ink-3);
+    text-decoration: underline;
+    text-decoration-color: var(--line-2);
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.desk-away:hover {
+    color: var(--ink);
+    text-decoration-color: currentColor;
+}
+
+.desk-away-live {
+    color: var(--ink-2);
 }
 
 /* The row of figures stands on the desk's edge. */

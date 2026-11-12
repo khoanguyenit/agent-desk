@@ -80,6 +80,21 @@ function rememberText(name: string, value: string): void {
     }
 }
 
+// The projects taken off the board, by path. A list someone else wrote into
+// the store is not trusted to be a list.
+function recallHidden(): Set<string> {
+    try {
+        const got: unknown = JSON.parse(recallText('hidden') || '[]');
+        return new Set(Array.isArray(got) ? got.filter((x): x is string => typeof x === 'string').slice(0, 500) : []);
+    } catch {
+        return new Set();
+    }
+}
+
+function rememberHidden(): void {
+    rememberText('hidden', JSON.stringify(Array.from(view.hidden)));
+}
+
 function recallBudget(): number {
     const n = Number(recallText('budget'));
     return Number.isFinite(n) && n > 0 && n <= 1_000_000 ? n : 0;
@@ -93,6 +108,8 @@ const view: ViewState = {
     open: {sessionId: '', agentId: '', projectPath: ''},
     filter: '',
     budget: recallBudget(),
+    hidden: recallHidden(),
+    showHidden: false,
 };
 
 // Which of the two pages is on screen: the board of what runs now, or the
@@ -344,7 +361,7 @@ function render(): void {
     // it costs (the meter). Each part is patched on its own, so the floor's
     // figures keep moving while the figures in the meter change.
     const overview = h('div', {class: 'overview', 'data-key': 'overview', 'data-container': true},
-        lead(shown), floor(shown, view.open.projectPath), ...meter(shown, view, past.trend(history, TREND_DAYS)));
+        lead(shown), floor(shown, view.open.projectPath, view.hidden, view.showHidden), ...meter(shown, view, past.trend(history, TREND_DAYS)));
     const next = nothing
         ? h('div', null, nothingRunning(shown))
         : h('div', null, overview, view.ledgerOpen && ledger(shown), bays(shown, view));
@@ -600,6 +617,28 @@ content.addEventListener('click', event => {
         return;
     }
 
+    // Taking a project off the board, and putting it back.
+    const hide = target.closest<HTMLElement>('[data-hide-project]');
+    if (hide) {
+        view.hidden.add(hide.dataset.hideProject!);
+        rememberHidden();
+        render();
+        return;
+    }
+    const show = target.closest<HTMLElement>('[data-show-project]');
+    if (show) {
+        view.hidden.delete(show.dataset.showProject!);
+        if (view.hidden.size === 0) view.showHidden = false;
+        rememberHidden();
+        render();
+        return;
+    }
+    if (target.closest('[data-toggle-hidden]')) {
+        view.showHidden = !view.showHidden;
+        render();
+        return;
+    }
+
     const desk = target.closest<HTMLElement>('[data-scroll-project]');
     if (desk) {
         // A desk on the floor leads to its project's block further down.
@@ -623,7 +662,21 @@ content.addEventListener('click', event => {
     };
 
     if (target.closest('[data-add-project]')) {
-        report(AddProject());
+        // A folder that is added is wanted on the board: if it was hidden
+        // before, it comes back.
+        const added = new Set((snapshot?.projects ?? []).filter(p => (p as monitor.Project & { pinned?: boolean }).pinned).map(p => p.path));
+        void AddProject().then(async problem => {
+            actionProblem = problem;
+            await refresh();
+            let back = false;
+            for (const p of snapshot?.projects ?? []) {
+                if ((p as monitor.Project & { pinned?: boolean }).pinned && !added.has(p.path) && view.hidden.delete(p.path)) back = true;
+            }
+            if (back) {
+                rememberHidden();
+                render();
+            }
+        }, failed);
         return;
     }
 

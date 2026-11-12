@@ -79,6 +79,11 @@ export interface ViewState {
     // budget is the cost per day, in dollars, the user wants to stay under;
     // zero when none is set.
     budget: number;
+    // hidden holds the paths of the projects the user took off the board.
+    // They stay in every total. showHidden puts their desks back on the
+    // floor for a moment, so one can be chosen to return.
+    hidden: Set<string>;
+    showHidden: boolean;
 }
 
 export interface OpenMark {
@@ -803,6 +808,7 @@ export function bays(snap: monitor.Snapshot, view: ViewState): HTMLElement {
     const filtering = view.filter.trim() !== '';
     let listed = 0;
     for (const whole of liveFirst(snap.projects, project => project.sessions.some(sessionIsLive))) {
+        if (view.hidden.has(whole.path)) continue;
         // A project whose name carries the filter is listed whole. Of any
         // other, the sessions that carry it, or have an agent that does.
         let p = whole;
