@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"monitor-agent/internal/agent"
 	"monitor-agent/internal/clean"
 	"monitor-agent/internal/fsx"
+	"monitor-agent/internal/history"
 	"monitor-agent/internal/monitor"
 	"monitor-agent/internal/projects"
 )
@@ -31,7 +33,33 @@ const (
 	chatEventGap = 80 * time.Millisecond
 	// chatEvent is the name of the event the page listens to.
 	chatEvent = "chat"
+	// snapshotEvent tells the page a new scan is ready to be fetched, so it
+	// does not have to ask on a timer of its own. historyEvent says the same
+	// of the history, and focusEvent carries where a clicked notification
+	// points.
+	snapshotEvent = "snapshot"
+	historyEvent  = "history"
+	focusEvent    = "focus"
+
+	// The history is saved this often while it changes, and old transcripts
+	// are looked through again this often for sessions that ran while the
+	// app was closed or was not looking.
+	historySaveEvery = 2 * time.Minute
+	historyFillEvery = 6 * time.Hour
+	// maxBudgetUSD bounds the daily limit the page may set.
+	maxBudgetUSD = 1_000_000
+	// targetsKept is how many notifications are remembered for a click.
+	targetsKept = 64
 )
+
+// focusTarget is where a notification leads when it is clicked.
+type focusTarget struct {
+	ProjectPath string `json:"projectPath"`
+	SessionID   string `json:"sessionId"`
+	// Chat is true when the session is the app's own and its conversation
+	// should be opened.
+	Chat bool `json:"chat"`
+}
 
 const lockedMessage = "Bản dev đang khoá việc mở session. Xem ghi chú trên trang."
 
@@ -49,6 +77,7 @@ type App struct {
 
 	ready     chan struct{} // closed once the first snapshot exists
 	readyOnce sync.Once
+	pageReady atomic.Bool // the page has loaded and can be sent events
 	initMu    sync.Mutex  // serialises setting up notifications
 	refreshMu sync.Mutex  // one scan at a time, so an older one cannot overwrite a newer
 	asking    atomic.Bool // a folder or trust dialog is open
@@ -64,6 +93,10 @@ type App struct {
 	notifyReady bool
 	problem     string // why the last notification could not be sent
 	listProblem string // why the saved project list could not be read
+	histProblem string // why the saved history could not be read at start-up
+	saveProblem string // why the history could not be saved just now
+	budget      float64
+	targets     map[string]focusTarget // where each recent notification leads
 	sent        int
 	chatTimers  map[string]bool   // sessions with a chat event already scheduled
 	chatStates  map[string]string // last state seen per session, to spot a new wait
@@ -72,6 +105,18 @@ type App struct {
 // NewApp creates the application with the real environment.
 func NewApp() *App {
 	opts, notice, locked := monitorOptions()
+	// A locked development build keeps nothing on disk: its history lives
+	// and dies with the process, like its project list.
+	var listPath, historyPath string
+	if !locked {
+		if dir, err := os.UserConfigDir(); err == nil {
+			listPath = filepath.Join(dir, "monitor-agent", "projects.json")
+			historyPath = filepath.Join(dir, "monitor-agent", "history.json")
+		}
+	}
+	ledger, historyErr := history.Open(historyPath)
+	opts.History = ledger
+
 	a := &App{
 		svc:        monitor.New(opts),
 		notice:     notice,
@@ -79,15 +124,14 @@ func NewApp() *App {
 		ready:      make(chan struct{}),
 		chatTimers: map[string]bool{},
 		chatStates: map[string]string{},
+		targets:    map[string]focusTarget{},
+	}
+	if historyErr != nil {
+		a.histProblem = "Không đọc được lịch sử chi phí đã lưu (" + clean.Text(historyErr.Error(), 200) +
+			"). Lịch sử được dựng lại từ transcript còn trên đĩa; file cũ được giữ lại dưới tên history.json.bak."
 	}
 	a.agents = agent.NewManager(a.chatChanged)
 
-	var listPath string
-	if !locked {
-		if dir, err := os.UserConfigDir(); err == nil {
-			listPath = filepath.Join(dir, "monitor-agent", "projects.json")
-		}
-	}
 	store, err := projects.Open(listPath)
 	if err != nil {
 		a.listProblem = "Không đọc được danh sách project đã thêm (" + clean.Text(err.Error(), 200) +
@@ -117,17 +161,80 @@ func (a *App) shutdown(context.Context) {
 		cancel()
 	}
 	a.agents.Shutdown()
+	// What the day cost so far is kept for the next start.
+	_ = a.svc.SaveHistory()
+}
+
+// domReady is called by Wails once the page has loaded.
+func (a *App) domReady(context.Context) { a.pageReady.Store(true) }
+
+// tell sends the page an event, once there is a page to hear it.
+func (a *App) tell(event string, data ...interface{}) {
+	a.mu.Lock()
+	ctx, closing := a.ctx, a.closing
+	a.mu.Unlock()
+	if ctx == nil || closing || !a.pageReady.Load() {
+		return
+	}
+	runtime.EventsEmit(ctx, event, data...)
 }
 
 func (a *App) watch(ctx context.Context) {
 	ticker := time.NewTicker(refreshEvery)
 	defer ticker.Stop()
+	a.refresh()
+	// The board comes first. Only then are older transcripts read, and the
+	// sessions the board is showing are already in the history by then.
+	go a.keepHistory(ctx)
 	for {
-		a.refresh()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			a.refresh()
+		}
+	}
+}
+
+// keepHistory reads the transcripts of earlier days into the history, now and
+// every few hours, and saves the history while it changes.
+func (a *App) keepHistory(ctx context.Context) {
+	// note records how the latest save went. One that worked clears an
+	// earlier complaint.
+	note := func(what string, err error) {
+		problem := ""
+		if err != nil {
+			problem = what + ": " + clean.Text(err.Error(), 200)
+		}
+		a.mu.Lock()
+		a.saveProblem = problem
+		a.mu.Unlock()
+	}
+	fill := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				note("Lỗi nội bộ khi đọc lịch sử", fmt.Errorf("%v", r))
+			}
+		}()
+		err := a.svc.Backfill(ctx)
+		if ctx.Err() == nil {
+			note("Không lưu được lịch sử chi phí", err)
+			a.tell(historyEvent)
+		}
+	}
+	fill()
+	save := time.NewTicker(historySaveEvery)
+	defer save.Stop()
+	again := time.NewTicker(historyFillEvery)
+	defer again.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-save.C:
+			note("Không lưu được lịch sử chi phí", a.svc.SaveHistory())
+		case <-again.C:
+			fill()
 		}
 	}
 }
@@ -187,23 +294,34 @@ func (a *App) refresh() {
 	prev, had := a.latest, a.have
 	a.latest, a.have = snap, true
 	announce := had && a.notify && a.notifyReady
-	privacy, ctx := a.privacy, a.ctx
+	privacy, ctx, budget := a.privacy, a.ctx, a.budget
 	a.mu.Unlock()
 	a.readyOnce.Do(func() { close(a.ready) })
+	a.tell(snapshotEvent)
 
 	if !announce {
 		return
 	}
 	for _, e := range monitor.Diff(prev, snap) {
 		title, body := e.Text(privacy)
-		a.send(ctx, title, body)
+		a.send(ctx, title, body, focusTarget{ProjectPath: e.ProjectPath, SessionID: e.SessionID})
+	}
+	if monitor.BudgetCrossed(prev, snap, budget) {
+		a.send(ctx, "Chi phí hôm nay đã vượt ngưỡng bạn đặt",
+			fmt.Sprintf("Đã tiêu $%.2f, ngưỡng là $%.2f. Đây là số quy theo giá API.", snap.TodaySpend.CostUSD, budget), focusTarget{})
 	}
 }
 
-func (a *App) send(ctx context.Context, title, body string) {
+// send raises a desktop notification. target is where a click on it leads;
+// the zero value leads nowhere in particular and only brings the app forward.
+func (a *App) send(ctx context.Context, title, body string, target focusTarget) {
 	a.mu.Lock()
 	a.sent++
 	id := "monitor-agent-" + strconv.Itoa(a.sent)
+	if target != (focusTarget{}) {
+		a.targets[id] = target
+	}
+	delete(a.targets, "monitor-agent-"+strconv.Itoa(a.sent-targetsKept))
 	a.mu.Unlock()
 
 	err := runtime.SendNotification(ctx, runtime.NotificationOptions{ID: id, Title: title, Body: body})
@@ -238,6 +356,11 @@ func (a *App) GetSnapshot() monitor.Snapshot {
 	if a.listProblem != "" && damaged {
 		snap.Warnings = append(snap.Warnings, a.listProblem)
 	}
+	for _, p := range []string{a.histProblem, a.saveProblem} {
+		if p != "" {
+			snap.Warnings = append(snap.Warnings, p)
+		}
+	}
 	if a.problem != "" {
 		snap.Warnings = append(snap.Warnings, a.problem)
 	}
@@ -266,19 +389,101 @@ func (a *App) SetOptions(notify, privacy, announce bool) string {
 		if err := runtime.InitializeNotifications(ctx); err != nil {
 			return "Không bật được thông báo: " + err.Error()
 		}
-		// Clicking a notification brings the monitor forward.
-		runtime.OnNotificationResponse(ctx, func(runtime.NotificationResult) {
+		// Clicking a notification brings the app forward, and takes the
+		// page to what the notification was about when that is known.
+		runtime.OnNotificationResponse(ctx, func(res runtime.NotificationResult) {
 			runtime.WindowUnminimise(ctx)
 			runtime.WindowShow(ctx)
+			a.mu.Lock()
+			target, known := a.targets[res.Response.ID]
+			a.mu.Unlock()
+			if known {
+				a.tell(focusEvent, target)
+			}
 		})
 		a.mu.Lock()
 		a.notifyReady = true
 		a.mu.Unlock()
 	}
 	if announce {
-		a.send(ctx, "Agent Desk", "Đã bật thông báo. Bạn sẽ được báo khi một session hoặc agent làm xong.")
+		a.send(ctx, "Agent Desk", "Đã bật thông báo. Bạn sẽ được báo khi một session hoặc agent làm xong.", focusTarget{})
 	}
 	return ""
+}
+
+// SetBudget records the cost per day, in dollars at API list price, past
+// which the user wants to be told. Zero means no limit. The notification is
+// sent once, when the day's cost crosses it, and only while notifications are
+// on. It returns an empty string, or what is wrong with the figure.
+func (a *App) SetBudget(usd float64) string {
+	if math.IsNaN(usd) || usd < 0 || usd > maxBudgetUSD {
+		return "Ngưỡng chi phí phải là một số từ 0 tới " + strconv.Itoa(maxBudgetUSD) + " USD."
+	}
+	a.mu.Lock()
+	a.budget = usd
+	a.mu.Unlock()
+	return ""
+}
+
+// GetHistory returns what was consumed on each of the last days, today
+// included. It answers from what the app has kept; reading old transcripts
+// goes on in the background, and History.Scan says how far it has come.
+func (a *App) GetHistory(days int) monitor.History {
+	return a.svc.History(days)
+}
+
+// ExportHistory writes the last days of history to a CSV file the user picks
+// in a dialog of the operating system: the page cannot choose where it goes.
+// It returns an empty string, or what went wrong; cancelling is not an error.
+func (a *App) ExportHistory(days int) string {
+	ctx := a.context()
+	if ctx == nil {
+		return "Ứng dụng chưa sẵn sàng."
+	}
+	if !a.asking.CompareAndSwap(false, true) {
+		return ""
+	}
+	defer a.asking.Store(false)
+	rows := a.svc.HistoryRows(days)
+	if len(rows) == 0 {
+		return "Chưa có số liệu nào trong khoảng này để xuất."
+	}
+	name := "agent-desk-chi-phi-" + rows[0].Day + "_" + rows[len(rows)-1].Day + ".csv"
+	path, err := runtime.SaveFileDialog(ctx, runtime.SaveDialogOptions{
+		Title:           "Xuất lịch sử chi phí",
+		DefaultFilename: name,
+		Filters:         []runtime.FileFilter{{DisplayName: "CSV (*.csv)", Pattern: "*.csv"}},
+	})
+	if err != nil {
+		return "Không mở được hộp lưu file: " + err.Error()
+	}
+	if path == "" {
+		return ""
+	}
+	if err := writeFile(path, func(f *os.File) error { return monitor.WriteHistoryCSV(f, rows) }); err != nil {
+		return "Không ghi được file: " + clean.Text(err.Error(), 200)
+	}
+	return ""
+}
+
+// writeFile creates path, lets fill write to it, and reports the first thing
+// that went wrong, a failed close included: on a full disk that is where the
+// loss shows.
+func writeFile(path string, fill func(*os.File) error) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := fill(f); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// GetModels lists the models a new session can be started with.
+func (a *App) GetModels() []monitor.ModelChoice {
+	return a.svc.ModelChoices()
 }
 
 func (a *App) context() context.Context {
@@ -486,11 +691,28 @@ type StartResult struct {
 	Problem string `json:"problem"`
 }
 
+// offered reports whether model is one the app offers for a new session; the
+// empty name, which leaves the choice to Claude Code, always is.
+func (a *App) offered(model string) bool {
+	if model == "" {
+		return true
+	}
+	for _, c := range a.svc.ModelChoices() {
+		if c.ID == model {
+			return true
+		}
+	}
+	return false
+}
+
+const modelProblem = "Model này không nằm trong danh sách app đưa ra."
+
 // StartSession opens a new Claude Code session in a project and sends it the
-// user's first request. mode is "ask", "acceptEdits" or "plan". The project
-// must be one the user has agreed to (see TrustProject): that is checked
-// here, not left to the page.
-func (a *App) StartSession(projectPath, prompt, mode string) StartResult {
+// user's first request. mode is "ask", "acceptEdits" or "plan"; model is one
+// of GetModels, or empty for Claude Code's own default. The project must be
+// one the user has agreed to (see TrustProject): that is checked here, not
+// left to the page.
+func (a *App) StartSession(projectPath, prompt, mode, model string) StartResult {
 	if a.locked {
 		return StartResult{Problem: lockedMessage}
 	}
@@ -501,10 +723,41 @@ func (a *App) StartSession(projectPath, prompt, mode string) StartResult {
 	if !a.projects.Has(p.Dir()) {
 		return StartResult{Problem: "Thư mục này chưa được bạn xác nhận tin tưởng. Bấm \"Session mới\" lại để xác nhận."}
 	}
-	id, err := a.agents.Start(p.Dir(), prompt, mode)
+	if !a.offered(model) {
+		return StartResult{Problem: modelProblem}
+	}
+	id, err := a.agents.Open(agent.Options{Dir: p.Dir(), Prompt: prompt, Mode: mode, Model: model})
 	if err != nil {
 		return StartResult{ID: id, Problem: err.Error()}
 	}
+	return StartResult{ID: id}
+}
+
+// ResumeSession opens again a session that has ended and sends it the user's
+// next request. Only a session the board lists as closed today can be named,
+// it is opened in the folder it ran in, and that folder must be one the user
+// has agreed to, exactly as for a new session.
+func (a *App) ResumeSession(sessionID, prompt, mode, model string) StartResult {
+	if a.locked {
+		return StartResult{Problem: lockedMessage}
+	}
+	dir, err := a.svc.Resumable(sessionID)
+	if err != nil {
+		return StartResult{Problem: err.Error()}
+	}
+	if !a.projects.Has(dir) {
+		return StartResult{Problem: "Thư mục của session này chưa được bạn xác nhận tin tưởng. Bấm \"Tiếp tục session\" lại để xác nhận."}
+	}
+	if !a.offered(model) {
+		return StartResult{Problem: modelProblem}
+	}
+	id, err := a.agents.Open(agent.Options{Dir: dir, Prompt: prompt, Mode: mode, Model: model, Resume: sessionID})
+	if err != nil {
+		return StartResult{ID: id, Problem: err.Error()}
+	}
+	// The session is running again; the board should stop listing it as
+	// closed without waiting for the next tick.
+	go a.refresh()
 	return StartResult{ID: id}
 }
 
@@ -591,10 +844,10 @@ type TrailResult struct {
 	Problem string        `json:"problem"`
 }
 
-// GetTrail returns the latest steps of a running session's main thread, or
-// of one of its agents when agentID is given. It is read-only, and reaches
-// only sessions that are on the board. With "Ẩn nội dung" on, what was said
-// and run is left out.
+// GetTrail returns the latest steps of a session's main thread, or of one of
+// its agents when agentID is given. It is read-only, and reaches only
+// sessions that are on the board: the running ones and the ones listed as
+// closed today. With "Ẩn nội dung" on, what was said and run is left out.
 func (a *App) GetTrail(sessionID, agentID string) TrailResult {
 	a.mu.Lock()
 	hide := a.privacy
@@ -656,5 +909,5 @@ func (a *App) announceWaiting(ctx context.Context, id string) {
 			body = "Agent xin phép dùng " + v.Pending[0].Tool + "."
 		}
 	}
-	a.send(ctx, title, body)
+	a.send(ctx, title, body, focusTarget{SessionID: v.ID, Chat: true})
 }
