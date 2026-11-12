@@ -14,6 +14,10 @@ export function EndSession(arg1) {
   return window['go']['main']['App']['EndSession'](arg1);
 }
 
+export function ExportHistory(arg1) {
+  return window['go']['main']['App']['ExportHistory'](arg1);
+}
+
 export function ForgetSession(arg1) {
   return window['go']['main']['App']['ForgetSession'](arg1);
 }
@@ -24,6 +28,14 @@ export function GetChat(arg1, arg2) {
 
 export function GetClaude() {
   return window['go']['main']['App']['GetClaude']();
+}
+
+export function GetHistory(arg1) {
+  return window['go']['main']['App']['GetHistory'](arg1);
+}
+
+export function GetModels() {
+  return window['go']['main']['App']['GetModels']();
 }
 
 export function GetSnapshot() {
@@ -54,16 +66,24 @@ export function RemoveProject(arg1) {
   return window['go']['main']['App']['RemoveProject'](arg1);
 }
 
+export function ResumeSession(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ResumeSession'](arg1, arg2, arg3, arg4);
+}
+
 export function SendChat(arg1, arg2) {
   return window['go']['main']['App']['SendChat'](arg1, arg2);
+}
+
+export function SetBudget(arg1) {
+  return window['go']['main']['App']['SetBudget'](arg1);
 }
 
 export function SetOptions(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOptions'](arg1, arg2, arg3);
 }
 
-export function StartSession(arg1, arg2, arg3) {
-  return window['go']['main']['App']['StartSession'](arg1, arg2, arg3);
+export function StartSession(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['StartSession'](arg1, arg2, arg3, arg4);
 }
 
 export function TrustProject(arg1) {

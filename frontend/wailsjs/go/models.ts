@@ -552,6 +552,141 @@ export namespace monitor {
 	        this.quietAgents = source["quietAgents"];
 	    }
 	}
+	export class HistoryScan {
+	    running: boolean;
+	    done: number;
+	    total: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HistoryScan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.done = source["done"];
+	        this.total = source["total"];
+	    }
+	}
+	export class HistoryPart {
+	    key: string;
+	    name: string;
+	    path: string;
+	    costUsd: number;
+	    tokens: number;
+	    unpricedTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HistoryPart(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.costUsd = source["costUsd"];
+	        this.tokens = source["tokens"];
+	        this.unpricedTokens = source["unpricedTokens"];
+	    }
+	}
+	export class HistoryDay {
+	    day: string;
+	    spend: Spend;
+	    sessions: number;
+	    projects: HistoryPart[];
+	    models: HistoryPart[];
+	
+	    static createFrom(source: any = {}) {
+	        return new HistoryDay(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.spend = this.convertValues(source["spend"], Spend);
+	        this.sessions = source["sessions"];
+	        this.projects = this.convertValues(source["projects"], HistoryPart);
+	        this.models = this.convertValues(source["models"], HistoryPart);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class History {
+	    today: string;
+	    days: HistoryDay[];
+	    firstDay: string;
+	    scan: HistoryScan;
+	    pricingAsOf: string;
+	    kept: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new History(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.today = source["today"];
+	        this.days = this.convertValues(source["days"], HistoryDay);
+	        this.firstDay = source["firstDay"];
+	        this.scan = this.convertValues(source["scan"], HistoryScan);
+	        this.pricingAsOf = source["pricingAsOf"];
+	        this.kept = source["kept"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	
+	export class ModelChoice {
+	    id: string;
+	    label: string;
+	    openUsd: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelChoice(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.openUsd = source["openUsd"];
+	    }
+	}
 	export class ModelRow {
 	    model: string;
 	    label: string;
@@ -802,6 +937,7 @@ export namespace monitor {
 	    steps: TrailStep[];
 	    earlier: boolean;
 	    hidden: boolean;
+	    closed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Trail(source);
@@ -814,6 +950,7 @@ export namespace monitor {
 	        this.steps = this.convertValues(source["steps"], TrailStep);
 	        this.earlier = source["earlier"];
 	        this.hidden = source["hidden"];
+	        this.closed = source["closed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

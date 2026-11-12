@@ -1,10 +1,11 @@
 import {
-    AnswerPermission, EndSession, ForgetSession, GetChat, GetClaude, GetTrail, InterruptSession, ListChats, SendChat,
-    StartSession,
+    AnswerPermission, EndSession, ForgetSession, GetChat, GetClaude, GetModels, GetTrail, InterruptSession, ListChats,
+    ResumeSession, SendChat, StartSession, TrustProject,
 } from '../wailsjs/go/main/App';
 import {agent, monitor} from '../wailsjs/go/models';
 import {EventsOn} from '../wailsjs/runtime/runtime';
 import * as f from './format';
+import {markdown} from './markdown';
 import {agentStatus, h, OpenMark, sessionStatus, statusNode, StatusView} from './render';
 
 // The side panel. It shows one of three things:
@@ -26,6 +27,9 @@ type Showing = 'none' | 'draft' | 'chat' | 'trail';
 interface Draft {
     projectPath: string;
     projectName: string;
+    // Set when the draft carries on a session that has ended instead of
+    // starting a new one.
+    resume?: { sessionId: string; title: string };
 }
 
 export interface TrailTarget {
@@ -67,9 +71,14 @@ let gen = 0;
 let fetching = false;
 let again = false;
 let sending = false;
+// A session is being checked for carrying on: the question whether its folder
+// is trusted may be on screen.
+let resuming = false;
 let problem = '';
 let board: monitor.Snapshot | null = null;
 let claude: { path: string; problem: string } | null = null;
+let models: monitor.ModelChoice[] = [];
+let modelShape = '';
 let pickerShape = '';
 let pickerAsk = 0;
 let onChange: () => void = () => {};
@@ -98,9 +107,21 @@ const problemEl = h('p', {class: 'chat-problem', role: 'alert'});
 const overText = h('span', {class: 'chat-over-text'}, 'Session đã kết thúc.');
 const againBtn = h('button', {type: 'button', class: 'chat-btn'}, 'Session mới');
 const forgetBtn = h('button', {type: 'button', class: 'chat-btn chat-btn-quiet', title: 'Bỏ session đã kết thúc này khỏi danh sách của app. Transcript của Claude Code không bị xoá.'}, 'Bỏ khỏi danh sách');
-const overBar = h('div', {class: 'chat-over'}, overText, againBtn, forgetBtn);
+const carryBtn = h('button', {
+    type: 'button', class: 'chat-btn',
+    title: 'Mở lại chính session này và giao việc tiếp',
+}, 'Tiếp tục session này');
+const overBar = h('div', {class: 'chat-over'}, overText, carryBtn, againBtn, forgetBtn);
 
 const readonlyEl = h('p', {class: 'chat-readonly'});
+
+// Under the steps of a session that has closed: the way to carry it on.
+const closedText = h('span', {class: 'chat-over-text'}, 'Session này đã đóng.');
+const resumeBtn = h('button', {
+    type: 'button', class: 'chat-btn',
+    title: 'Mở lại session này trong app và giao việc tiếp. Claude Code nạp lại toàn bộ hội thoại cũ.',
+}, 'Tiếp tục session này');
+const closedBar = h('div', {class: 'chat-over'}, closedText, resumeBtn);
 
 const modeBox = h('fieldset', {class: 'chat-modes'}, h('legend', null, 'Quyền của agent trong session này'));
 for (const m of MODES) {
@@ -108,9 +129,13 @@ for (const m of MODES) {
     modeBox.append(h('label', {class: 'chat-mode', for: `chat-mode-${m.value}`},
         radio, h('span', {class: 'chat-mode-label'}, m.label), h('span', {class: 'chat-mode-hint'}, m.hint)));
 }
+// The model is the session's for its whole life; like the mode it is chosen
+// anew for each session and starts from Claude Code's own default.
+const modelPick = h('select', {class: 'chat-pick chat-model', id: 'chat-model'});
+const modelRow = h('label', {class: 'chat-model-row', for: 'chat-model'}, h('span', {class: 'chat-model-label'}, 'Model'), modelPick);
 const input = h('textarea', {class: 'chat-input', rows: 2, 'aria-label': 'Yêu cầu gửi cho agent'});
 const sendBtn = h('button', {type: 'submit', class: 'chat-btn chat-send'}, 'Gửi');
-const form = h('form', {class: 'chat-form'}, modeBox, input, sendBtn);
+const form = h('form', {class: 'chat-form'}, modeBox, modelRow, input, sendBtn);
 
 const drawer = h('aside', {class: 'chat', 'aria-label': 'Khung làm việc với agent', hidden: true},
     // The title gets the full width of the first row; what acts on the
@@ -125,6 +150,7 @@ const drawer = h('aside', {class: 'chat', 'aria-label': 'Khung làm việc với
     problemEl,
     overBar,
     readonlyEl,
+    closedBar,
     form,
 );
 
@@ -257,24 +283,8 @@ function trailEntries(): Entry[] {
 
 // ---- drawing ------------------------------------------------------------------
 
-// proseNodes turns the agent's text into paragraphs and code blocks. Fenced
-// code keeps its line breaks and gets a fixed-width face; nothing else is
-// interpreted, and everything goes in as text.
-function proseNodes(text: string): Node[] {
-    const out: Node[] = [];
-    text.split(/^```[^\n]*$/m).forEach((part, i) => {
-        const body = part.replace(/^\n+|\n+$/g, '');
-        if (!body) return;
-        if (i % 2 === 1) {
-            out.push(h('pre', {class: 'msg-code'}, body));
-            return;
-        }
-        for (const para of body.split(/\n{2,}/)) {
-            if (para.trim()) out.push(h('p', {class: 'msg-prose'}, para));
-        }
-    });
-    return out;
-}
+// What the agent writes is Markdown, and is drawn as such: see markdown.ts.
+// What the user typed is shown exactly as typed.
 
 // changeNode draws an edit to a file as a diff. Every line of the change is
 // there: nothing is folded away.
@@ -314,9 +324,9 @@ function entryNode(e: Entry, dir: string): HTMLElement {
             return h('div', {class: 'msg msg-user'},
                 h('span', {class: e.who === 'Bạn' ? 'vh' : 'msg-who'}, e.who), h('p', {class: 'msg-prose'}, e.text));
         case 'text':
-            return h('div', {class: 'msg msg-agent' + (e.live ? ' is-live' : '')}, ...proseNodes(e.text));
+            return h('div', {class: 'msg msg-agent' + (e.live ? ' is-live' : '')}, ...markdown(e.text));
         case 'report':
-            return h('div', {class: 'msg msg-agent msg-report'}, h('span', {class: 'msg-who'}, e.who), ...proseNodes(e.text));
+            return h('div', {class: 'msg msg-agent msg-report'}, h('span', {class: 'msg-who'}, e.who), ...markdown(e.text));
         case 'tool': {
             const details = h('details', {class: 'msg-details'},
                 h('summary', null,
@@ -505,6 +515,16 @@ function drawPending(): void {
 
 // ---- the heading ----------------------------------------------------------------
 
+// closedOnBoard finds a session among those the board lists as closed today.
+function closedOnBoard(id: string): { session: monitor.ClosedSession; project: monitor.Project } | null {
+    for (const project of board?.projects ?? []) {
+        for (const session of (project as monitor.Project & { closed?: monitor.ClosedSession[] }).closed ?? []) {
+            if (session.id === id) return {session, project};
+        }
+    }
+    return null;
+}
+
 function sessionOnBoard(id: string): { session: monitor.Session; project: monitor.Project } | null {
     for (const project of board?.projects ?? []) {
         for (const session of project.sessions) {
@@ -525,6 +545,11 @@ function baseName(dir: string): string {
 function drawHeading(): void {
     if (showing === 'draft' && draft) {
         projectEl.textContent = draft.projectName;
+        if (draft.resume) {
+            titleEl.textContent = draft.resume.title || 'Session đã đóng';
+            metaEl.replaceChildren('Tiếp tục session đã đóng. Nó mở lại khi bạn gửi yêu cầu.');
+            return;
+        }
         titleEl.textContent = 'Session mới';
         metaEl.replaceChildren('Chưa mở. Session bắt đầu khi bạn gửi yêu cầu đầu tiên.');
         return;
@@ -532,10 +557,17 @@ function drawHeading(): void {
     if (showing === 'trail' && target) {
         const found = sessionOnBoard(target.sessionId);
         const a = found?.session.agents.find(x => x.id === target!.agentId);
-        projectEl.textContent = found?.project.name ?? '';
-        if (!found) {
+        const closed = found ? null : closedOnBoard(target.sessionId);
+        projectEl.textContent = found?.project.name ?? closed?.project.name ?? '';
+        if (closed) {
+            const c = closed.session;
+            titleEl.textContent = c.title || 'Session chưa có tiêu đề';
+            metaEl.replaceChildren(
+                statusNode({cls: 'is-done', icon: 'square', label: 'Đã đóng'}),
+                ' · ' + [c.modelLabel, f.usd(c.all.costUsd), f.ago(c.endedAtMs, board?.generatedAtMs ?? Date.now())].filter(Boolean).join(' · '));
+        } else if (!found) {
             titleEl.textContent = 'Session đã đóng';
-            metaEl.replaceChildren('Session này không còn chạy nên không còn trên bảng.');
+            metaEl.replaceChildren('Session này không còn trên bảng.');
         } else if (target.agentId === '') {
             const s = found.session;
             titleEl.textContent = s.title || s.name || 'Luồng chính';
@@ -566,9 +598,13 @@ function drawHeading(): void {
 function draftNote(): Node {
     const where = draft ? projectOfDir(draft.projectPath)?.path ?? draft.projectPath : '';
     const box = h('div', {class: 'chat-brief'},
-        h('p', null, 'Session mới sẽ chạy tại'),
+        h('p', null, draft?.resume ? 'Session sẽ mở lại tại' : 'Session mới sẽ chạy tại'),
         h('p', {class: 'chat-brief-path'}, where),
     );
+    if (draft?.resume) {
+        box.append(h('p', {class: 'chat-brief-with'},
+            'Claude Code nạp lại toàn bộ hội thoại cũ, nên lượt đầu tốn hơn một lượt thường. Các bước trước đó xem ở dòng của session trên bảng.'));
+    }
     if (claude?.problem) box.append(h('p', {class: 'chat-brief-warn'}, claude.problem));
     else if (claude?.path) box.append(h('p', {class: 'chat-brief-with', title: claude.path}, 'bằng Claude Code ở ', h('span', {class: 'chat-brief-exe'}, claude.path)));
     return box;
@@ -593,10 +629,18 @@ function draw(): void {
     endBtn.hidden = !live;
     form.hidden = showing === 'trail' || over;
     modeBox.hidden = showing !== 'draft';
+    modelRow.hidden = showing !== 'draft';
     overBar.hidden = !over;
     readonlyEl.hidden = showing !== 'trail';
+    // Only the main thread of a closed session can be carried on, and only
+    // while the board still lists it.
+    const closedTrail = showing === 'trail' && Boolean(trail?.closed) && target?.agentId === '' && closedOnBoard(target.sessionId) !== null;
+    closedBar.hidden = !closedTrail;
+    resumeBtn.disabled = resuming;
+    carryBtn.disabled = resuming;
+    if (showing === 'draft') drawModels();
     sendBtn.disabled = sending;
-    input.placeholder = showing === 'draft'
+    input.placeholder = showing === 'draft' && !draft?.resume
         ? 'Nhập yêu cầu đầu tiên. Enter để gửi, Shift+Enter để xuống dòng.'
         : 'Nhập yêu cầu tiếp theo. Enter để gửi, Shift+Enter để xuống dòng.';
 
@@ -605,6 +649,8 @@ function draw(): void {
         overText.textContent = state === 'failed' ? 'Session đã dừng do lỗi.' : 'Session đã kết thúc.';
         againBtn.hidden = project === null;
         againBtn.textContent = project ? `Session mới ở ${project.name}` : 'Session mới';
+        // It can be carried on once the board has noticed that it closed.
+        carryBtn.hidden = closedOnBoard(currentId) === null;
     }
 
     let shownProblem = problem;
@@ -616,7 +662,9 @@ function draw(): void {
     if (showing === 'trail') {
         readonlyEl.textContent = trail?.hidden
             ? 'Chỉ xem. Nội dung đang được ẩn theo công tắc "Ẩn nội dung".'
-            : 'Chỉ xem. Session này chạy ngoài app nên không ra lệnh được từ đây. Câu chữ dài được cắt bớt, chuỗi trông như mật khẩu được che.';
+            : trail?.closed
+                ? 'Chỉ xem: đây là những bước cuối của một session đã đóng. Câu chữ dài được cắt bớt, chuỗi trông như mật khẩu được che.'
+                : 'Chỉ xem. Session này chạy ngoài app nên không ra lệnh được từ đây. Câu chữ dài được cắt bớt, chuỗi trông như mật khẩu được che.';
         const entries = trailEntries();
         const earlier: Entry[] = trail?.earlier && entries.length > 0
             ? [{
@@ -633,6 +681,22 @@ function draw(): void {
     drawActivity();
     drawPending();
     if (nearBottom) log.scrollTop = log.scrollHeight;
+}
+
+// drawModels lists the models a session can be started with. The first entry
+// leaves the choice to Claude Code's own settings.
+function drawModels(): void {
+    const rows = [
+        {value: '', label: 'Mặc định của Claude Code'},
+        ...models.map(m => ({value: m.id, label: `${m.label} · mở session khoảng ${f.usd(m.openUsd)}`})),
+    ];
+    const shape = JSON.stringify(rows);
+    if (shape === modelShape) return;
+    modelShape = shape;
+    const chosen = modelPick.value;
+    modelPick.replaceChildren(...rows.map(r => h('option', {value: r.value}, r.label)));
+    modelPick.value = rows.some(r => r.value === chosen) ? chosen : '';
+    modelPick.title = 'Model của session này. Con số là chi phí nạp system prompt khi mở session, quy theo giá API.';
 }
 
 async function drawPicker(): Promise<void> {
@@ -734,6 +798,7 @@ function turn(to: Showing): void {
     rev = 0;
     problem = '';
     sending = false;
+    resuming = false;
     toggled.clear();
     answering.clear();
     trailKeys = new Map();
@@ -764,7 +829,9 @@ async function submit(): Promise<void> {
     const asked = gen;
     try {
         if (showing === 'draft' && draft) {
-            const res = await StartSession(draft.projectPath, text, chosenMode());
+            const res = draft.resume
+                ? await ResumeSession(draft.resume.sessionId, text, chosenMode(), modelPick.value)
+                : await StartSession(draft.projectPath, text, chosenMode(), modelPick.value);
             if (asked !== gen) return;
             if (!res.id) {
                 problem = res.problem || 'Không mở được session.';
@@ -890,6 +957,45 @@ againBtn.addEventListener('click', () => {
     if (project) openDraft(project.path, project.name);
 });
 
+// carryOn opens the draft that carries on a closed session, once its folder
+// has been agreed to: the same question a new session there would raise.
+function carryOn(sessionId: string): void {
+    const found = closedOnBoard(sessionId);
+    if (!found) {
+        problem = 'Session này chưa hiện trong danh sách đã đóng trên bảng. Thử lại sau vài giây.';
+        if (showing === 'trail') trailProblem = problem;
+        draw();
+        return;
+    }
+    if (resuming) return;
+    resuming = true;
+    draw();
+    const asked = gen;
+    const said = (text: string) => {
+        if (asked !== gen) return;
+        resuming = false;
+        problem = text;
+        if (showing === 'trail') trailProblem = text;
+        draw();
+    };
+    TrustProject(found.project.path).then(res => {
+        if (asked !== gen) return;
+        if (!res.ok) {
+            said(res.problem);
+            return;
+        }
+        openDraft(found.project.path, found.project.name, {sessionId, title: found.session.title});
+    }, err => said(err instanceof Error ? err.message : String(err)));
+}
+
+resumeBtn.addEventListener('click', () => {
+    if (showing === 'trail' && target && target.agentId === '') carryOn(target.sessionId);
+});
+
+carryBtn.addEventListener('click', () => {
+    if (showing === 'chat' && currentId) carryOn(currentId);
+});
+
 closeBtn.addEventListener('click', () => close());
 
 picker.addEventListener('change', () => {
@@ -915,13 +1021,18 @@ export function open(id: string): void {
     input.focus();
 }
 
-/** Opens the panel ready to start a new session in a project. */
-export function openDraft(projectPath: string, projectName: string): void {
+/**
+ * Opens the panel ready to start a new session in a project, or, with resume,
+ * to carry on one that has closed there.
+ */
+export function openDraft(projectPath: string, projectName: string, resume?: Draft['resume']): void {
     turn('draft');
-    draft = {projectPath, projectName};
+    draft = {projectPath, projectName, resume};
     // Every new session starts from the mode that asks first; a looser mode
-    // is chosen each time, never carried over from the last session.
+    // is chosen each time, never carried over from the last session. The
+    // model, likewise, goes back to Claude Code's own.
     chooseMode('ask');
+    modelPick.value = '';
     draw();
     void drawPicker();
     input.focus();
@@ -932,6 +1043,10 @@ export function openDraft(projectPath: string, projectName: string): void {
         claude = info;
         draw();
     }, () => { /* the note is a courtesy; starting will say what is wrong */ });
+    GetModels().then(list => {
+        models = list ?? [];
+        if (asked === gen) draw();
+    }, () => { /* without the list the session starts on Claude Code's default */ });
 }
 
 /** Opens the panel on the steps of a session or agent that runs elsewhere. */

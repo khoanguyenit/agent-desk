@@ -10,11 +10,17 @@ export function AnswerPermission(arg1:string,arg2:string,arg3:boolean):Promise<s
 
 export function EndSession(arg1:string):Promise<string>;
 
+export function ExportHistory(arg1:number):Promise<string>;
+
 export function ForgetSession(arg1:string):Promise<string>;
 
 export function GetChat(arg1:string,arg2:number):Promise<main.ChatResult>;
 
 export function GetClaude():Promise<main.ClaudeInfo>;
+
+export function GetHistory(arg1:number):Promise<monitor.History>;
+
+export function GetModels():Promise<Array<monitor.ModelChoice>>;
 
 export function GetSnapshot():Promise<monitor.Snapshot>;
 
@@ -30,10 +36,14 @@ export function OpenProject(arg1:string):Promise<string>;
 
 export function RemoveProject(arg1:string):Promise<string>;
 
+export function ResumeSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.StartResult>;
+
 export function SendChat(arg1:string,arg2:string):Promise<string>;
+
+export function SetBudget(arg1:number):Promise<string>;
 
 export function SetOptions(arg1:boolean,arg2:boolean,arg3:boolean):Promise<string>;
 
-export function StartSession(arg1:string,arg2:string,arg3:string):Promise<main.StartResult>;
+export function StartSession(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.StartResult>;
 
 export function TrustProject(arg1:string):Promise<main.TrustResult>;
