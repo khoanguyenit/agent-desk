@@ -81,6 +81,17 @@ func TestDiff(t *testing.T) {
 			want: []Event{{Kind: EventSessionIdle, Project: "app", SessionID: "s3", Session: "app-7", Status: "idle"}},
 		},
 		{
+			name: "a session that stops to wait for the user is an event too",
+			prev: snapshotWith(Session{ID: "s4", PID: 4, Title: "Deploy", Status: "busy"}),
+			cur:  snapshotWith(Session{ID: "s4", PID: 4, Title: "Deploy", Status: "waiting", WaitingFor: "input needed"}),
+			want: []Event{{Kind: EventSessionIdle, Project: "app", SessionID: "s4", Session: "Deploy", Status: "waiting"}},
+		},
+		{
+			name: "and is not said again while it goes on waiting",
+			prev: snapshotWith(Session{ID: "s4", PID: 4, Title: "Deploy", Status: "waiting"}),
+			cur:  snapshotWith(Session{ID: "s4", PID: 4, Title: "Deploy", Status: "waiting"}),
+		},
+		{
 			name: "an agent given up on is said once, when it stops being counted as working",
 			prev: snapshotWith(busy),
 			cur: snapshotWith(Session{ID: "s1", PID: 1, Title: "Fix timeout", Status: "busy", ActiveAgents: 1,
@@ -166,9 +177,22 @@ func TestEventText(t *testing.T) {
 			wantBody:  "Fix timeout\n2 agent vừa xong.\nCòn 1 agent đang chạy.",
 		},
 		{
-			name:      "an unfamiliar status is shown as it is",
+			name:      "a session held up for the user says so",
+			event:     Event{Kind: EventSessionIdle, Project: "app", Session: "Fix timeout", Status: "waiting", StillActive: 1},
+			wantTitle: "app: cần bạn trả lời",
+			wantBody:  "Fix timeout\nClaude Code đang dừng lại chờ bạn trả lời hoặc duyệt.\nCòn 1 agent đang chạy.",
+		},
+		{
+			name:      "and keeps the title to itself with privacy on",
 			event:     Event{Kind: EventSessionIdle, Project: "app", Session: "Fix timeout", Status: "waiting"},
-			wantTitle: "app: session chuyển sang waiting",
+			privacy:   true,
+			wantTitle: "app: cần bạn trả lời",
+			wantBody:  "Claude Code đang dừng lại chờ bạn trả lời hoặc duyệt.",
+		},
+		{
+			name:      "an unfamiliar status is shown as it is",
+			event:     Event{Kind: EventSessionIdle, Project: "app", Session: "Fix timeout", Status: "compacting"},
+			wantTitle: "app: session chuyển sang compacting",
 			wantBody:  "Fix timeout",
 		},
 		{

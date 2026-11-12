@@ -24,6 +24,7 @@ import {EventsOn} from '../wailsjs/runtime/runtime';
 import * as chat from './chat';
 import * as f from './format';
 import * as past from './history';
+import * as notices from './notices';
 import {bays, h, lead, ledger, meter, nothingRunning, ViewState} from './render';
 import {floor} from './scene';
 
@@ -140,7 +141,7 @@ function toggle(id: string, label: string, title: string, on: boolean, change: (
 
 const switches = h('div', {class: 'switches'},
     toggle('sw-notify', 'Báo khi xong',
-        'Hiện thông báo của Windows khi một session xong lượt hoặc một agent làm xong',
+        'Báo khi một session xong lượt, khi nó dừng lại chờ bạn trả lời, và khi một agent làm xong: trong cửa sổ này, bằng nút trên taskbar, và bằng thông báo của Windows nếu Windows đang cho hiện',
         notify, on => {
             notify = on;
             remember('notify', on);
@@ -197,7 +198,7 @@ find.addEventListener('keydown', event => {
 
 const topBar = h('header', {class: 'top'},
     h('div', {class: 'top-left'}, h('span', {class: 'brand'}, 'Agent Desk'), tabs),
-    h('div', {class: 'top-right'}, find, switches, stamp),
+    h('div', {class: 'top-right'}, find, notices.bell, switches, stamp),
 );
 
 // The readout of one day of the chart. It follows the pointer and the
@@ -684,6 +685,20 @@ credit.addEventListener('click', event => {
 // The side panel sits beside the board, outside the part that is redrawn. The
 // board marks what the panel shows, so it is drawn again when that changes.
 chat.mount(root, () => render());
+
+// goTo takes the page to what a notification was about: the conversation of
+// a session of the app's own, or else the project's place on the board.
+function goTo(to: { projectPath?: string; sessionId?: string; chat?: boolean }): void {
+    setMode('board');
+    if (to.chat && to.sessionId) {
+        chat.open(to.sessionId);
+        return;
+    }
+    pendingProject = to.projectPath ?? '';
+    void refresh();
+}
+notices.mount(root, goTo);
+
 tabs.addEventListener('click', event => {
     const to = (event.target as HTMLElement).closest<HTMLElement>('[data-view]');
     if (to) setMode(to.dataset.view as Mode);
@@ -714,17 +729,12 @@ EventsOn('snapshot', () => {
     void refresh().finally(schedule);
 });
 EventsOn('history', () => void loadHistory());
-// A notification was clicked: go to what it was about.
+// A notification of Windows was clicked: go to what it was about.
 EventsOn('focus', (to: { projectPath?: string; sessionId?: string; chat?: boolean } | null) => {
-    if (!to) return;
-    setMode('board');
-    if (to.chat && to.sessionId) {
-        chat.open(to.sessionId);
-        return;
-    }
-    pendingProject = to.projectPath ?? '';
-    void refresh();
+    if (to) goTo(to);
 });
+// Everything the app says is also kept in the window; see notices.ts.
+EventsOn('notice', n => notices.add(n));
 
 render();
 void pushOptions(false);

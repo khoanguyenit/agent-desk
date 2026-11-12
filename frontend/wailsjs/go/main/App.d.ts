@@ -22,6 +22,8 @@ export function GetHistory(arg1:number):Promise<monitor.History>;
 
 export function GetModels():Promise<Array<monitor.ModelChoice>>;
 
+export function GetNotices():Promise<Array<main.Notice>>;
+
 export function GetSnapshot():Promise<monitor.Snapshot>;
 
 export function GetTrail(arg1:string,arg2:string):Promise<main.TrailResult>;

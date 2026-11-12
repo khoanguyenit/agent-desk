@@ -272,6 +272,30 @@ export namespace main {
 	        this.problem = source["problem"];
 	    }
 	}
+	export class Notice {
+	    id: number;
+	    atMs: number;
+	    title: string;
+	    body: string;
+	    projectPath: string;
+	    sessionId: string;
+	    chat: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Notice(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.atMs = source["atMs"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.projectPath = source["projectPath"];
+	        this.sessionId = source["sessionId"];
+	        this.chat = source["chat"];
+	    }
+	}
 	export class StartResult {
 	    id: string;
 	    problem: string;
@@ -733,6 +757,7 @@ export namespace monitor {
 	    title: string;
 	    pid: number;
 	    status: string;
+	    waitingFor: string;
 	    entrypoint: string;
 	    version: string;
 	    gitBranch: string;
@@ -766,6 +791,7 @@ export namespace monitor {
 	        this.title = source["title"];
 	        this.pid = source["pid"];
 	        this.status = source["status"];
+	        this.waitingFor = source["waitingFor"];
 	        this.entrypoint = source["entrypoint"];
 	        this.version = source["version"];
 	        this.gitBranch = source["gitBranch"];

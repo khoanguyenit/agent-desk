@@ -44,6 +44,9 @@ type Session struct {
 	Kind       string
 	Entrypoint string
 	Version    string
+	// WaitingFor is what a session with the status "waiting" says it is
+	// held up by, in Claude Code's own words ("input needed").
+	WaitingFor string
 	StartedAt  time.Time
 	UpdatedAt  time.Time
 
@@ -86,6 +89,7 @@ type registryEntry struct {
 	Kind       string     `json:"kind"`
 	Entrypoint string     `json:"entrypoint"`
 	Version    string     `json:"version"`
+	WaitingFor string     `json:"waitingFor"`
 	ProcStart  flexString `json:"procStart"`
 	StartedAt  int64      `json:"startedAt"`
 	UpdatedAt  int64      `json:"updatedAt"`
@@ -122,6 +126,7 @@ func readEntry(path string) (Session, bool) {
 		Kind:       r.Kind,
 		Entrypoint: r.Entrypoint,
 		Version:    r.Version,
+		WaitingFor: r.WaitingFor,
 		StartedAt:  msToTime(r.StartedAt),
 		UpdatedAt:  msToTime(r.UpdatedAt),
 		procStart:  string(r.ProcStart),

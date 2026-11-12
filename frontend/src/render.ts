@@ -117,7 +117,9 @@ function carries(filter: string): (...texts: (string | undefined | null)[]) => b
 const ENDED_SHOWN = 6;
 
 const isActive = (a: monitor.Agent) => a.status === 'running' || a.status === 'quiet';
-const sessionIsLive = (s: monitor.Session) => s.status === 'busy' || s.activeAgents > 0;
+// A session that has stopped for the user is in the middle of its work: it
+// counts as live, and is listed with the ones that run.
+const sessionIsLive = (s: monitor.Session) => s.status === 'busy' || s.status === 'waiting' || s.activeAgents > 0;
 
 function warningLine(text: string): HTMLElement {
     return h('p', {class: 'warning'}, h('span', {class: 'warning-mark', 'aria-hidden': 'true'}, '!'), text);
@@ -127,10 +129,14 @@ function warningLine(text: string): HTMLElement {
 
 export function lead(snap: monitor.Snapshot): HTMLElement {
     const c = snap.counts;
-    // A session that has stopped to ask for permission still counts as busy
-    // to Claude Code. Here it is counted as what it is: waiting for the user.
-    const asking = snap.projects.reduce((n, p) => n + p.sessions.filter(s => (s as Session).awaitingUser && !(s as Session).duplicate).length, 0);
-    const busy = Math.max(0, c.busySessions - asking);
+    // A session of the app's own that has stopped to ask for permission
+    // still counts as busy to Claude Code. Here it is counted as what it is:
+    // waiting for the user, like a session elsewhere that says so itself.
+    const own = (s: monitor.Session) => (s as Session).awaitingUser && !(s as Session).duplicate;
+    const held = (s: monitor.Session) => s.status === 'waiting' && !(s as Session).awaitingUser && !(s as Session).duplicate;
+    const ownAsking = snap.projects.reduce((n, p) => n + p.sessions.filter(own).length, 0);
+    const asking = ownAsking + snap.projects.reduce((n, p) => n + p.sessions.filter(held).length, 0);
+    const busy = Math.max(0, c.busySessions - ownAsking);
     const live = busy > 0 || c.runningAgents > 0;
     let headline: string;
     if (busy > 0 && c.runningAgents > 0) {
@@ -151,7 +157,7 @@ export function lead(snap: monitor.Snapshot): HTMLElement {
         h('h1', {class: 'headline'},
             live && h('span', {class: 'lamp', 'aria-hidden': 'true'}),
             headline && h('span', null, headline),
-            asking > 0 && h('span', {class: (headline ? 'headline-quiet ' : '') + 'headline-asking'}, icon('pause'), `${asking} session chờ bạn cho phép`),
+            asking > 0 && h('span', {class: (headline ? 'headline-quiet ' : '') + 'headline-asking'}, icon('pause'), `${asking} session chờ bạn`),
             c.quietAgents > 0 && h('span', {class: 'headline-quiet'}, icon('pause'), `${c.quietAgents} agent im lặng`),
         ),
     );
@@ -568,6 +574,14 @@ export function sessionStatus(s: Session): StatusView {
         return {
             cls: 'is-quiet', icon: 'pause', label: 'Chờ bạn cho phép',
             title: 'Agent đã dừng lại để xin phép. Mở chat để trả lời.',
+        };
+    }
+    if (s.status === 'waiting') {
+        // Claude Code's own word for it ("input needed") goes in the tooltip.
+        const where = s.entrypoint.includes('vscode') ? 'trong VS Code' : 'ở nơi session đang mở';
+        return {
+            cls: 'is-quiet', icon: 'pause', label: 'Chờ bạn trả lời',
+            title: `Claude Code đã dừng lại chờ bạn trả lời hoặc duyệt${s.waitingFor ? ` (${s.waitingFor})` : ''}. Trả lời ${where}.`,
         };
     }
     if (s.status === 'busy') return {cls: 'is-running', icon: 'dot', label: 'Đang chạy'};

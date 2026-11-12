@@ -50,6 +50,16 @@ const (
 	pathRunes  = 300
 )
 
+// What Claude Code records as the state of a session. A session is busy while
+// a turn runs, idle when the turn is over, and waiting when the turn has
+// stopped for the user: a question to answer, an action to approve. Other
+// words are passed through as they are.
+const (
+	SessionBusy    = "busy"
+	SessionIdle    = "idle"
+	SessionWaiting = "waiting"
+)
+
 // Agent states.
 const (
 	StatusRunning = "running"
@@ -114,11 +124,14 @@ type Agent struct {
 
 // Session is one running Claude Code process.
 type Session struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Title         string   `json:"title"`
-	PID           int      `json:"pid"`
-	Status        string   `json:"status"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Title  string `json:"title"`
+	PID    int    `json:"pid"`
+	Status string `json:"status"`
+	// WaitingFor is what a waiting session says it waits for, in Claude
+	// Code's own words; empty for any other status.
+	WaitingFor    string   `json:"waitingFor"`
 	Entrypoint    string   `json:"entrypoint"`
 	Version       string   `json:"version"`
 	GitBranch     string   `json:"gitBranch"`
@@ -957,6 +970,9 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 		Agents:          []Agent{},
 		Pulse:           []int{},
 		RecordedCostUSD: -1,
+	}
+	if rs.Status == SessionWaiting {
+		sess.WaitingFor = clean.Text(rs.WaitingFor, labelRunes)
 	}
 	var all, today acc
 

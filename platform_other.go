@@ -19,3 +19,9 @@ func openURI(ctx context.Context, uri string) error {
 func fatal(message string) {
 	fmt.Fprintln(os.Stderr, message)
 }
+
+// toastBlock and flashWindow are for Windows; elsewhere the desktop's own
+// notifications are all there is.
+func toastBlock() string { return "" }
+
+func flashWindow() {}

@@ -21,7 +21,7 @@ interface Worker {
 // How many figures a desk seats before the rest become a "+N".
 const SEATS = 8;
 
-const sessionIsLive = (s: monitor.Session) => s.status === 'busy' || s.activeAgents > 0;
+const sessionIsLive = (s: monitor.Session) => s.status === 'busy' || s.status === 'waiting' || s.activeAgents > 0;
 
 function workersOf(p: monitor.Project): { workers: Worker[]; ended: number } {
     const leads: Worker[] = [];
@@ -32,7 +32,7 @@ function workersOf(p: monitor.Project): { workers: Worker[]; ended: number } {
         if (own.duplicate) continue;
         // A session that has stopped to ask for permission is held up, and
         // is drawn so even though its process still counts as busy.
-        leads.push({lead: true, state: own.awaitingUser ? 'waiting' : s.status === 'busy' ? 'running' : 'idle'});
+        leads.push({lead: true, state: own.awaitingUser || s.status === 'waiting' ? 'waiting' : s.status === 'busy' ? 'running' : 'idle'});
         for (const a of s.agents) {
             if (a.status === 'running') {
                 agents.push({lead: false, state: 'running'});

@@ -40,6 +40,9 @@ const (
 	snapshotEvent = "snapshot"
 	historyEvent  = "history"
 	focusEvent    = "focus"
+	// noticeEvent carries each thing the user is told, for the list the page
+	// keeps: Windows may be set not to show notifications at all.
+	noticeEvent = "notice"
 
 	// The history is saved this often while it changes, and old transcripts
 	// are looked through again this often for sessions that ran while the
@@ -50,7 +53,25 @@ const (
 	maxBudgetUSD = 1_000_000
 	// targetsKept is how many notifications are remembered for a click.
 	targetsKept = 64
+	// noticesKept is how many notices the in-app list goes back.
+	noticesKept = 40
+	// toastCheckEvery is how often Windows is asked again whether it shows
+	// this app's notifications.
+	toastCheckEvery = 10 * time.Second
 )
+
+// Notice is one thing the app told the user. It is a line of the list in the
+// window, and the text of the Windows notification when Windows shows those.
+type Notice struct {
+	ID    int    `json:"id"`
+	AtMs  int64  `json:"atMs"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	// Where it leads when clicked; see focusTarget.
+	ProjectPath string `json:"projectPath"`
+	SessionID   string `json:"sessionId"`
+	Chat        bool   `json:"chat"`
+}
 
 // focusTarget is where a notification leads when it is clicked.
 type focusTarget struct {
@@ -97,6 +118,9 @@ type App struct {
 	saveProblem string // why the history could not be saved just now
 	budget      float64
 	targets     map[string]focusTarget // where each recent notification leads
+	notices     []Notice               // the latest things said, oldest first
+	toastWhy    string                 // why Windows will not show notifications, if it will not
+	toastAt     time.Time              // when that was last looked up
 	sent        int
 	chatTimers  map[string]bool   // sessions with a chat event already scheduled
 	chatStates  map[string]string // last state seen per session, to spot a new wait
@@ -289,11 +313,13 @@ func (a *App) refresh() {
 	}()
 
 	snap := a.decorate(a.svc.Snapshot())
+	a.checkToasts()
 
 	a.mu.Lock()
 	prev, had := a.latest, a.have
 	a.latest, a.have = snap, true
-	announce := had && a.notify && a.notifyReady
+	// Whether Windows will show them or not: the window lists them too.
+	announce := had && a.notify
 	privacy, ctx, budget := a.privacy, a.ctx, a.budget
 	a.mu.Unlock()
 	a.readyOnce.Do(func() { close(a.ready) })
@@ -312,8 +338,12 @@ func (a *App) refresh() {
 	}
 }
 
-// send raises a desktop notification. target is where a click on it leads;
-// the zero value leads nowhere in particular and only brings the app forward.
+// send tells the user something, three ways at once, because none of them is
+// sure to arrive alone: a line in the window's own list, a flashing taskbar
+// button when the window is not in front, and a Windows notification, which
+// Windows shows only if it has not been told otherwise. target is where a
+// click leads; the zero value leads nowhere in particular and only brings the
+// app forward.
 func (a *App) send(ctx context.Context, title, body string, target focusTarget) {
 	a.mu.Lock()
 	a.sent++
@@ -322,7 +352,22 @@ func (a *App) send(ctx context.Context, title, body string, target focusTarget) 
 		a.targets[id] = target
 	}
 	delete(a.targets, "monitor-agent-"+strconv.Itoa(a.sent-targetsKept))
+	note := Notice{
+		ID: a.sent, AtMs: time.Now().UnixMilli(), Title: title, Body: body,
+		ProjectPath: target.ProjectPath, SessionID: target.SessionID, Chat: target.Chat,
+	}
+	a.notices = append(a.notices, note)
+	if n := len(a.notices); n > noticesKept {
+		a.notices = append([]Notice(nil), a.notices[n-noticesKept:]...)
+	}
+	toast := a.notifyReady
 	a.mu.Unlock()
+
+	a.tell(noticeEvent, note)
+	flashWindow()
+	if !toast {
+		return
+	}
 
 	err := runtime.SendNotification(ctx, runtime.NotificationOptions{ID: id, Title: title, Body: body})
 
@@ -364,7 +409,36 @@ func (a *App) GetSnapshot() monitor.Snapshot {
 	if a.problem != "" {
 		snap.Warnings = append(snap.Warnings, a.problem)
 	}
+	if a.notify && a.toastWhy != "" {
+		snap.Warnings = append(snap.Warnings, a.toastWhy+" Trong lúc đó app vẫn báo trong cửa sổ này (nút Thông báo) và nhấp nháy trên taskbar.")
+	}
 	return snap
+}
+
+// checkToasts looks up, now and then, whether Windows is set not to show this
+// app's notifications. Windows drops them without a word in that case, so
+// the app would otherwise never know why nothing appears.
+func (a *App) checkToasts() {
+	a.mu.Lock()
+	due := a.notify && time.Since(a.toastAt) >= toastCheckEvery
+	if due {
+		a.toastAt = time.Now()
+	}
+	a.mu.Unlock()
+	if !due {
+		return
+	}
+	why := toastBlock()
+	a.mu.Lock()
+	a.toastWhy = why
+	a.mu.Unlock()
+}
+
+// GetNotices returns the latest things the app told the user, oldest first.
+func (a *App) GetNotices() []Notice {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]Notice{}, a.notices...)
 }
 
 // SetOptions records the page's switches. notify turns desktop notifications
@@ -387,7 +461,7 @@ func (a *App) SetOptions(notify, privacy, announce bool) string {
 	a.mu.Unlock()
 	if !ready {
 		if err := runtime.InitializeNotifications(ctx); err != nil {
-			return "Không bật được thông báo: " + err.Error()
+			return "Không đăng ký được thông báo với Windows (" + clean.Text(err.Error(), 200) + "). App vẫn báo trong cửa sổ này và nhấp nháy trên taskbar."
 		}
 		// Clicking a notification brings the app forward, and takes the
 		// page to what the notification was about when that is known.
@@ -406,7 +480,7 @@ func (a *App) SetOptions(notify, privacy, announce bool) string {
 		a.mu.Unlock()
 	}
 	if announce {
-		a.send(ctx, "Agent Desk", "Đã bật thông báo. Bạn sẽ được báo khi một session hoặc agent làm xong.", focusTarget{})
+		a.send(ctx, "Agent Desk", "Đã bật thông báo. Bạn sẽ được báo khi một session xong lượt, cần bạn trả lời, hoặc một agent làm xong.", focusTarget{})
 	}
 	return ""
 }
@@ -896,7 +970,7 @@ func (a *App) announceWaiting(ctx context.Context, id string) {
 	a.mu.Lock()
 	was := a.chatStates[id]
 	a.chatStates[id] = v.State
-	announce := a.notify && a.notifyReady && v.State == agent.StateWaiting && was != agent.StateWaiting
+	announce := a.notify && v.State == agent.StateWaiting && was != agent.StateWaiting
 	privacy := a.privacy
 	a.mu.Unlock()
 	if !announce {

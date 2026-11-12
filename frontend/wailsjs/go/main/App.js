@@ -38,6 +38,10 @@ export function GetModels() {
   return window['go']['main']['App']['GetModels']();
 }
 
+export function GetNotices() {
+  return window['go']['main']['App']['GetNotices']();
+}
+
 export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }

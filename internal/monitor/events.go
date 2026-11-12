@@ -9,8 +9,9 @@ import (
 
 // Event kinds.
 const (
-	// EventSessionIdle: a session's main thread stopped working and is
-	// waiting for the user.
+	// EventSessionIdle: a session's main thread stopped working. Either its
+	// turn is over, or it has stopped in the middle of one because it needs
+	// the user; Event.Status says which.
 	EventSessionIdle = "session-idle"
 	// EventAgentsDone: one or more subagents of a session finished while the
 	// session itself carried on.
@@ -52,12 +53,20 @@ func (e Event) Text(privacy bool) (title, body string) {
 	var lines []string
 	switch e.Kind {
 	case EventSessionIdle:
-		title = e.Project + ": đã xong, đang chờ bạn"
-		if e.Status != "idle" && e.Status != "" {
+		switch e.Status {
+		case SessionIdle, "":
+			title = e.Project + ": đã xong, đang chờ bạn"
+		case SessionWaiting:
+			// Not finished: held up until the user answers or approves.
+			title = e.Project + ": cần bạn trả lời"
+		default:
 			title = e.Project + ": session chuyển sang " + e.Status
 		}
 		if !privacy && e.Session != "" {
 			lines = append(lines, e.Session)
+		}
+		if e.Status == SessionWaiting {
+			lines = append(lines, "Claude Code đang dừng lại chờ bạn trả lời hoặc duyệt.")
 		}
 		if n := len(e.Agents); n > 0 {
 			lines = append(lines, fmt.Sprintf("%d agent vừa xong.", n))
