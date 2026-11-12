@@ -2485,6 +2485,853 @@ button {
     background: transparent;
 }
 
+/* ---- two pages: the board and the history ------------------------------------ */
+
+.top-left {
+    display: flex;
+    align-items: baseline;
+    gap: 8px 24px;
+    flex-wrap: wrap;
+}
+
+/* The page that is on screen is underlined the way a project at work is: a
+   rule in full ink. The other one is a word waiting to be chosen. */
+.views {
+    display: flex;
+    gap: 16px;
+}
+
+.view-tab {
+    padding: 2px 0 3px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-3);
+    cursor: pointer;
+}
+
+.view-tab:hover {
+    color: var(--ink);
+}
+
+.view-tab.is-on {
+    border-bottom-color: var(--ink);
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.find {
+    width: 208px;
+    padding: 3px 8px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    background: transparent;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+}
+
+.find::placeholder {
+    color: var(--ink-3);
+}
+
+.find:focus {
+    background: var(--raised);
+}
+
+/* The filter and the switch that hides finished agents act on the board. */
+body[data-mode="history"] .find,
+body[data-mode="history"] .switch:nth-child(2) {
+    display: none;
+}
+
+.filter-none {
+    padding-top: 20px;
+}
+
+/* ---- the board's till: the limit and the last two weeks ----------------------- */
+
+.money-budget {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 10px;
+    font-size: 11.5px;
+    white-space: nowrap;
+    color: var(--ink-3);
+    cursor: help;
+    --meter: var(--accent);
+}
+
+.money-budget.is-near { --meter: var(--warn); }
+.money-budget.is-over { --meter: var(--del); }
+
+.money-budget.is-over .budget-text {
+    color: var(--ink);
+}
+
+/* The track is the colour of the fill, lighter, so the state reads along
+   the whole bar. */
+.budget-bar {
+    flex: 1 1 0;
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--meter) 22%, transparent);
+    overflow: hidden;
+}
+
+.budget-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--meter);
+}
+
+/* A bar a day, today in the accent: the way into the history. It stands in
+   the room left of the two totals, on their two rows, so the till is no
+   taller for it. */
+.money-trend {
+    grid-column: 1;
+    grid-row: 2 / span 2;
+    align-self: end;
+    display: grid;
+    gap: 4px;
+    max-width: 208px;
+    padding: 0 0 10px;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+.trend-foot {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.trend-label {
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.trend-sum::after {
+    content: " \203A";
+    font-family: var(--font-body);
+}
+
+.money-trend:hover .trend-label,
+.money-trend:hover .trend-sum {
+    color: var(--ink);
+}
+
+.trend-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 28px;
+    min-width: 0;
+    border-bottom: 1px solid var(--line-2);
+}
+
+.trend-bars i {
+    flex: 1 1 0;
+    max-width: 14px;
+    height: 0;
+    border-radius: 2px 2px 0 0;
+    background: var(--ink-3);
+}
+
+.trend-bars i.is-today {
+    background: var(--accent);
+}
+
+.trend-sum {
+    font-family: var(--font-data);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+}
+
+/* ---- the history page ---------------------------------------------------------- */
+
+.history {
+    padding-bottom: 8px;
+}
+
+/* What scopes the page sits in one row above everything it scopes. */
+.hist-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 24px;
+    padding-top: 20px;
+}
+
+.seg-group {
+    display: inline-flex;
+    align-items: center;
+}
+
+.seg-label {
+    margin-right: 8px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.seg-btn {
+    margin-left: -1px;
+    padding: 3px 12px;
+    border: 1px solid var(--line-2);
+    background: transparent;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+}
+
+.seg-btn:first-of-type {
+    margin-left: 0;
+    border-radius: 6px 0 0 6px;
+}
+
+.seg-btn:last-of-type {
+    border-radius: 0 6px 6px 0;
+}
+
+.seg-btn:hover {
+    color: var(--ink);
+}
+
+.seg-btn[aria-pressed="true"] {
+    position: relative;
+    border-color: var(--ink);
+    background: var(--ink);
+    font-weight: 500;
+    color: var(--page);
+}
+
+.seg-btn:focus-visible {
+    position: relative;
+    z-index: 1;
+}
+
+.hist-export {
+    margin-left: auto;
+}
+
+.hist-problem {
+    margin-top: 16px;
+}
+
+/* The stretch on the left, the fixed periods on the right: the same two
+   halves as the overview of the board. */
+.overview.hist-over {
+    grid-template-rows: auto;
+    grid-template-areas: "lead money";
+    padding-top: 20px;
+}
+
+/* The total of the stretch is what this page is about: it is set a size
+   above every other figure, level with the middle of the till. */
+.hist-lead {
+    align-self: center;
+}
+
+.hist-lead .headline {
+    align-items: baseline;
+    gap: 0 16px;
+}
+
+.hist-lead .headline > span:first-child {
+    font-size: 54px;
+    line-height: 1;
+}
+
+/* The words that say what the big figure is a figure of. */
+.headline-sub {
+    font-family: var(--font-body);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--ink-2);
+}
+
+.headline .act {
+    align-self: center;
+    font-family: var(--font-body);
+}
+
+.headline .unpriced {
+    font-size: 16px;
+}
+
+.hist-facts {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.hist-facts:empty {
+    display: none;
+}
+
+.hist-note {
+    margin-top: 4px;
+    max-width: 72ch;
+    font-size: 12.5px;
+    color: var(--ink-3);
+}
+
+.money.hmoney {
+    display: block;
+}
+
+.hm-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(96px, auto);
+    column-gap: 16px;
+    row-gap: 4px;
+    align-items: baseline;
+}
+
+.hm-grid .money-title {
+    grid-column: 1 / -1;
+    padding-bottom: 4px;
+}
+
+.hm-label {
+    text-align: left;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.hm-sum {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 21px;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.hm-before {
+    font-size: 11.5px;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--ink-3);
+}
+
+.hm-budget {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.hm-budget-field {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    font-family: var(--font-data);
+    color: var(--ink-3);
+}
+
+.hm-budget-field:focus-within {
+    border-color: var(--accent);
+    background: var(--raised);
+}
+
+.hm-budget-input {
+    width: 88px;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    font: inherit;
+    font-size: 12.5px;
+    text-align: right;
+    color: var(--ink);
+    appearance: textfield;
+}
+
+.hm-budget-input::-webkit-outer-spin-button,
+.hm-budget-input::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+}
+
+.hm-budget-input::placeholder {
+    font-family: var(--font-body);
+    color: var(--ink-3);
+}
+
+.hist-scan {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+.hist-scan .lamp {
+    margin: 0;
+    width: 8px;
+    height: 8px;
+}
+
+/* ---- the chart: a column a day on one baseline --------------------------------- */
+
+/* The plot is 228px high; under it runs the band of dates, inside the frame,
+   so the frame never needs to scroll. Left of it, the ticks of the one axis. */
+.hc {
+    margin-top: 28px;
+    --axis-w: 48px;
+    --dates-h: 24px;
+}
+
+.hc-frame {
+    position: relative;
+    height: 260px;
+    padding: 8px 0 0 var(--axis-w);
+}
+
+.hc-grid {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    bottom: var(--dates-h);
+    left: var(--axis-w);
+}
+
+.hc-line {
+    position: absolute;
+    right: 0;
+    left: 0;
+    height: 0;
+    border-top: 1px solid var(--line);
+}
+
+.hc-line.is-base {
+    border-top-color: var(--ink-3);
+}
+
+.hc-tick {
+    position: absolute;
+    right: 100%;
+    margin-right: 8px;
+    transform: translateY(-50%);
+    font-family: var(--font-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--ink-3);
+}
+
+/* The limit is a threshold, not a gridline: it takes the warning colour and
+   says what it is at its end. */
+.hc-line.is-budget {
+    border-top-color: var(--warn);
+}
+
+.hc-budget {
+    position: absolute;
+    right: 0;
+    bottom: 2px;
+    padding: 0 4px;
+    background: var(--page);
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--warn-ink);
+}
+
+.hc-cols {
+    position: relative;
+    display: flex;
+    height: 100%;
+}
+
+/* A day is hit anywhere in its slot, not only on the painted column. */
+.hc-col {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+}
+
+.hc-plot {
+    flex: 1 1 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    min-height: 0;
+}
+
+.hc-col.is-weekend .hc-plot {
+    background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+.hc-col:hover .hc-plot,
+.hc-col:focus-visible .hc-plot {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.hc-col:focus-visible {
+    outline-offset: -2px;
+}
+
+/* The column: never wider than 24px, rounded at the end that carries the
+   value and square on the baseline. The 2px between its parts is the page
+   showing through. */
+.hc-stack {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    width: min(24px, calc(100% - 2px));
+    min-height: 0;
+    border-radius: 4px 4px 0 0;
+    overflow: hidden;
+}
+
+.hc-seg {
+    flex: 0 0 0;
+    min-height: 1px;
+}
+
+.seg-other {
+    background: color-mix(in srgb, var(--ink-3) 60%, var(--page));
+}
+
+.hc-stack.is-rising {
+    transform-origin: bottom;
+    animation: hc-rise 460ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes hc-rise {
+    from { transform: scaleY(0); }
+}
+
+/* With a day picked, the others step back and the tables below are for that
+   day. */
+.hc-col.is-dimmed .hc-stack {
+    opacity: 0.32;
+}
+
+.hc-x {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--dates-h);
+    font-family: var(--font-data);
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--ink-3);
+}
+
+.hc-col.is-today .hc-x,
+.hc-col.is-picked .hc-x {
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.hc-col.is-picked .hc-x {
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.hc-legend {
+    margin-top: 8px;
+    padding-left: 48px;
+    font-size: 12.5px;
+}
+
+.hc-legend li {
+    cursor: default;
+}
+
+/* The readout of a day. The value leads and the name follows; each row is
+   keyed with a short stroke of its colour. */
+.tip {
+    position: fixed;
+    z-index: 8;
+    min-width: 184px;
+    max-width: 320px;
+    padding: 10px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    background: var(--raised);
+    box-shadow: var(--lift);
+    pointer-events: none;
+}
+
+.tip[hidden] {
+    display: none;
+}
+
+.tip-day,
+.tip-meta {
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.tip-total {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 21px;
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+}
+
+.tip-rows {
+    display: grid;
+    gap: 2px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.tip-rows li {
+    display: grid;
+    grid-template-columns: 10px auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+}
+
+.tip-key {
+    width: 10px;
+    height: 3px;
+    border-radius: 2px;
+}
+
+.tip-value {
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.tip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+
+/* ---- a strip per project and per model ---------------------------------------- */
+
+.hist-ledger {
+    margin-top: 28px;
+    padding-top: 0;
+    border-bottom: 0;
+}
+
+.hrows {
+    display: block;
+}
+
+.hrow {
+    display: grid;
+    grid-template-columns: minmax(96px, 1fr) minmax(96px, 1.3fr) 60px 76px 52px;
+    column-gap: 16px;
+    align-items: center;
+    min-height: 34px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.hrows .hrow:last-child {
+    border-bottom: 0;
+}
+
+.hrow > * {
+    min-width: 0;
+}
+
+.hrow-head {
+    min-height: 0;
+    padding: 8px 0 4px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.hrow .num {
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+    color: var(--ink-2);
+}
+
+.hrow-head .num {
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+
+.hrow .hrow-cost {
+    color: var(--ink);
+}
+
+.hrow .hrow-share {
+    color: var(--ink-3);
+}
+
+.hrow-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.hrow-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hrow-none {
+    padding: 12px 0;
+    color: var(--ink-3);
+}
+
+/* The days of each row, on the time axis of the chart. */
+.hspark {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+    height: 20px;
+    border-bottom: 1px solid var(--line-2);
+}
+
+.hspark i {
+    flex: 1 1 0;
+    height: 0;
+    border-radius: 1px 1px 0 0;
+    background: var(--ink-3);
+}
+
+.hspark i.is-picked {
+    background: var(--accent);
+}
+
+.hspark-axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-data);
+    font-size: 11px;
+    cursor: help;
+}
+
+.hday {
+    margin-top: 20px;
+}
+
+.hday-table {
+    margin-top: 8px;
+}
+
+.hday-table tbody th {
+    width: auto;
+    max-width: none;
+    font-family: var(--font-data);
+    font-size: 12.5px;
+    font-weight: 400;
+}
+
+.hday-table th.hday-top,
+.hday-table td.hday-top {
+    width: 46%;
+    max-width: 0;
+    padding-left: 32px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink-2);
+}
+
+.hist-foot {
+    display: block;
+    max-width: 96ch;
+    margin-top: 20px;
+}
+
+@media (max-width: 1120px) {
+    .overview.hist-over {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            "lead"
+            "money";
+        border-bottom: 0;
+        padding-bottom: 0;
+    }
+
+    .money.hmoney {
+        max-width: 420px;
+    }
+}
+
+@media (max-width: 820px) {
+    .hrow {
+        grid-template-columns: minmax(88px, 1fr) minmax(72px, 1fr) 72px;
+    }
+
+    .hrow > .hrow-tokens,
+    .hrow > .hrow-share,
+    .hrow-head > :nth-child(3),
+    .hrow-head > :nth-child(5) {
+        display: none;
+    }
+
+    .hc {
+        --axis-w: 40px;
+    }
+
+    .hc-legend {
+        padding-left: 40px;
+    }
+
+    .find {
+        width: 160px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hc-stack.is-rising {
+        animation: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .hc-seg,
+    .tip-key,
+    .trend-bars i,
+    .hspark i,
+    .budget-bar i {
+        forced-color-adjust: none;
+    }
+}
+
 /* ---- what the agent writes: Markdown -------------------------------------------- */
 
 .msg-agent > * + * {

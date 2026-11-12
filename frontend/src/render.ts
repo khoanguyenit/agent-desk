@@ -73,6 +73,12 @@ export interface ViewState {
     ledgerOpen: boolean;
     // open is what the side panel is showing, so the board can mark it.
     open: OpenMark;
+    // filter is what was typed in the search box: only rows that carry it
+    // are listed.
+    filter: string;
+    // budget is the cost per day, in dollars, the user wants to stay under;
+    // zero when none is set.
+    budget: number;
 }
 
 export interface OpenMark {
@@ -94,6 +100,18 @@ type Spend = monitor.Spend & { costParts?: CostParts };
 type Agent = monitor.Agent & { awaitingTool?: boolean };
 type Session = monitor.Session & { duplicate?: boolean; managed?: boolean; awaitingUser?: boolean };
 type Project = monitor.Project & { pinned?: boolean; closed?: monitor.ClosedSession[] };
+
+// fold makes text comparable the way a person types it into a search box:
+// without capitals and without the marks of Vietnamese.
+function fold(s: string): string {
+    return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+}
+
+// carries returns the test a row must pass to be listed under the filter.
+function carries(filter: string): (...texts: (string | undefined | null)[]) => boolean {
+    const q = fold(filter.trim());
+    return (...texts) => q === '' || texts.some(t => Boolean(t) && fold(t!).includes(q));
+}
 
 // How many ended agents a session lists before the rest are folded away.
 const ENDED_SHOWN = 6;
@@ -374,18 +392,38 @@ function unpricedMark(sp: monitor.Spend): HTMLElement | null {
 // total at the head of two columns, the models itemised under them. Under
 // both runs a band that splits the cost by kind of token and opens the full
 // tables, project by project, on request.
-export function meter(snap: monitor.Snapshot, view: ViewState): HTMLElement[] {
+export function meter(snap: monitor.Snapshot, view: ViewState, trend: HTMLElement | null = null): HTMLElement[] {
     const money = h('section', {class: 'money', 'data-key': 'money', 'aria-label': 'Chi phí'},
         h('h2', {class: 'money-title', title: pricingNote}, 'Chi phí'),
         h('span', {class: 'money-col'}, 'Hôm nay'),
         h('span', {class: 'money-col', title: sinceStart}, 'Tổng'),
-        h('span', {class: 'money-gap'}),
+        // The last two weeks, a bar a day, stand in the room beside the two
+        // totals: the way into the history. Without them that room is empty.
+        trend ?? h('span', {class: 'money-gap'}),
         h('span', {class: 'money-sum'}, f.usd(snap.todaySpend.costUsd), unpricedMark(snap.todaySpend)),
         h('span', {class: 'money-sum'}, f.usd(snap.all.costUsd), unpricedMark(snap.all)),
-        h('span', {class: 'money-gap'}),
+        !trend && h('span', {class: 'money-gap'}),
         h('span', {class: 'money-tokens', title: `${f.tokensExact(snap.todaySpend.totalTokens)} token`}, `${f.tokens(snap.todaySpend.totalTokens)} token`),
         h('span', {class: 'money-tokens', title: `${f.tokensExact(snap.all.totalTokens)} token`}, `${f.tokens(snap.all.totalTokens)} token`),
     );
+    // How far today has come against the limit the user set. The fill
+    // carries the state: in the accent while there is room, in the warning
+    // colour near the limit, in red past it; the track is the same colour,
+    // lighter.
+    if (view.budget > 0) {
+        const ratio = snap.todaySpend.costUsd / view.budget;
+        const state = ratio >= 1 ? ' is-over' : ratio >= 0.8 ? ' is-near' : '';
+        const fill = h('i');
+        fill.style.width = `${Math.min(100, Math.round(ratio * 1000) / 10)}%`;
+        money.append(h('span', {
+            class: 'money-budget' + state,
+            title: `Hôm nay ${f.usd(snap.todaySpend.costUsd)} trên ngưỡng ${f.usd(view.budget)} bạn đặt cho một ngày. Đổi ngưỡng ở trang Lịch sử.`,
+        },
+            h('span', {class: 'budget-bar', 'aria-hidden': 'true'}, fill),
+            h('span', {class: 'budget-text'}, ratio >= 1
+                ? `đã vượt ngưỡng ${f.usd(view.budget)}`
+                : `${f.percent(snap.todaySpend.costUsd, view.budget)} ngưỡng ${f.usd(view.budget)}`)));
+    }
     // A session that has ended still cost what it cost: it stays in both
     // totals for the rest of the day, and the till says so.
     const closedCount = snap.counts.closedSessions ?? 0;
@@ -559,7 +597,7 @@ function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState)
     const st = agentStatus(a);
     const meta = [a.type !== a.description ? a.type : '', a.modelLabel, a.phase ? `giai đoạn ${a.phase}` : '']
         .filter(Boolean).join(' · ');
-    const beat = isActive(a) ? pulse(a.pulse, a.status === 'running', nowMs) : null;
+    const beat = isActive(a) ? pulse(a.pulse ?? [], a.status === 'running', nowMs) : null;
     // Without a pulse to draw, the activity text takes that column too.
     const target = `${sessionId}|${a.id}`;
     const open = view.open.sessionId === sessionId && view.open.agentId === a.id;
@@ -670,10 +708,11 @@ function sessionStrip(s: Session, nowMs: number, view: ViewState, beat: HTMLElem
 }
 
 function sessionBlock(s: Session, nowMs: number, view: ViewState): HTMLElement {
-    const sessionBeat = s.status === 'busy' ? pulse(s.pulse, true, nowMs) : null;
+    const sessionBeat = s.status === 'busy' ? pulse(s.pulse ?? [], true, nowMs) : null;
     const active = s.agents.filter(isActive);
     const ended = s.agents.filter(a => !isActive(a));
-    const open = view.expanded.has(s.id);
+    // Under a filter the list is already short: nothing of it is folded away.
+    const open = view.expanded.has(s.id) || view.filter.trim() !== '';
     const shown = view.hideEnded ? [] : open ? ended : ended.slice(0, ENDED_SHOWN);
 
     const list = h('ul', {class: 'strips'}, sessionStrip(s, nowMs, view, sessionBeat));
@@ -696,22 +735,29 @@ function sessionBlock(s: Session, nowMs: number, view: ViewState): HTMLElement {
 // closedBlock lists the sessions of a project that have ended but were at
 // work today. They have nothing more to show than what they were and what
 // they cost, which is why they are here: the day's total includes them.
-function closedBlock(closed: monitor.ClosedSession[], nowMs: number): HTMLElement {
+function closedBlock(closed: monitor.ClosedSession[], nowMs: number, view: ViewState): HTMLElement {
     const list = h('ul', {class: 'strips'});
     for (const c of closed) {
+        const target = `${c.id}|`;
+        const open = view.open.sessionId === c.id && view.open.agentId === '';
         const meta = [
             c.modelLabel,
             c.gitBranch && `nhánh ${c.gitBranch}`,
             c.agents > 0 && `${c.agents} agent`,
             c.today.costUsd > 0 && `hôm nay ${f.usd(c.today.costUsd)}`,
         ].filter(Boolean).join(' · ');
-        list.append(h('li', {class: 'strip is-closed no-pulse'},
+        // The row opens what the session did, to be read, and from there it
+        // can be carried on.
+        list.append(h('li', {class: 'strip is-closed no-pulse' + (open ? ' is-open' : ''), 'data-open-trail': target},
             h('div', {class: 'c-st'}, statusNode({
                 cls: 'is-done', icon: 'square', label: 'Đã đóng',
                 title: 'Session này đã kết thúc. Chi phí của nó vẫn nằm trong tổng của hôm nay.',
             })),
             h('div', {class: 'c-name', title: c.title},
-                h('span', {class: 'agent-name'}, c.title || 'Session chưa có tiêu đề'),
+                h('button', {
+                    type: 'button', class: 'agent-name strip-open', 'data-fkey': `trail-${target}`,
+                    'aria-expanded': String(open), title: 'Xem các bước của session này, và mở lại nó nếu muốn',
+                }, c.title || 'Session chưa có tiêu đề'),
                 meta && h('span', {class: 'agent-meta'}, meta),
             ),
             h('div', {class: 'c-doing'}, h('div', {class: 'doing'},
@@ -737,9 +783,30 @@ function liveFirst<T>(items: T[], isLive: (item: T) => boolean): T[] {
 export function bays(snap: monitor.Snapshot, view: ViewState): HTMLElement {
     const nowMs = snap.generatedAtMs;
     const beating = snap.projects.some(p => p.sessions.some(s =>
-        (s.status === 'busy' && s.pulse.some(v => v > 0)) || s.agents.some(a => isActive(a) && a.pulse.some(v => v > 0))));
+        (s.status === 'busy' && (s.pulse ?? []).some(v => v > 0)) || s.agents.some(a => isActive(a) && (a.pulse ?? []).some(v => v > 0))));
     const wrap = h('div', {class: 'bays', 'data-key': 'bays', 'data-container': true}, stripHeader(beating));
-    for (const p of liveFirst(snap.projects, project => project.sessions.some(sessionIsLive))) {
+    const hit = carries(view.filter);
+    const filtering = view.filter.trim() !== '';
+    let listed = 0;
+    for (const whole of liveFirst(snap.projects, project => project.sessions.some(sessionIsLive))) {
+        // A project whose name carries the filter is listed whole. Of any
+        // other, the sessions that carry it, or have an agent that does.
+        let p = whole;
+        if (filtering && !hit(whole.name, whole.path)) {
+            const sessions: monitor.Session[] = [];
+            for (const s of whole.sessions) {
+                if (hit(s.title, s.name, s.gitBranch, s.modelLabel)) {
+                    sessions.push(s);
+                    continue;
+                }
+                const agents = s.agents.filter(a => hit(a.description, a.type, a.modelLabel, a.phase));
+                if (agents.length > 0) sessions.push({...s, agents} as monitor.Session);
+            }
+            const closed = closedOf(whole).filter(c => hit(c.title, c.gitBranch, c.modelLabel));
+            if (sessions.length === 0 && closed.length === 0) continue;
+            p = {...whole, sessions, closed} as monitor.Project;
+        }
+        listed++;
         // A project whose session runs inside VS Code can be jumped to.
         const inEditor = p.sessions.some(s => s.entrypoint.includes('vscode'));
         // A project with nothing at work keeps a quieter heading. The mark is
@@ -774,8 +841,12 @@ export function bays(snap: monitor.Snapshot, view: ViewState): HTMLElement {
             bay.append(h('p', {class: 'bay-empty', 'data-key': 'empty'}, 'Chưa có session nào đang chạy ở project này.'));
         }
         for (const s of liveFirst(p.sessions, sessionIsLive)) bay.append(sessionBlock(s as Session, nowMs, view));
-        if (closed.length > 0) bay.append(closedBlock(closed, nowMs));
+        if (closed.length > 0) bay.append(closedBlock(closed, nowMs, view));
         wrap.append(bay);
+    }
+    if (filtering && listed === 0) {
+        wrap.append(h('p', {class: 'bay-empty filter-none', 'data-key': 'filter-none'},
+            `Không có project, session hay agent nào mang chữ "${view.filter.trim()}". Các con số ở trên vẫn tính mọi thứ.`));
     }
     return wrap;
 }

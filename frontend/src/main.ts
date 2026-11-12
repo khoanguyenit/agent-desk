@@ -16,14 +16,30 @@ import '@fontsource/ibm-plex-mono/vietnamese-400';
 import '@fontsource/ibm-plex-mono/latin-500';
 import './style.css';
 
-import {AddProject, GetSnapshot, OpenCredit, OpenProject, RemoveProject, SetOptions, TrustProject} from '../wailsjs/go/main/App';
+import {
+    AddProject, ExportHistory, GetHistory, GetSnapshot, OpenCredit, OpenProject, RemoveProject, SetBudget, SetOptions, TrustProject,
+} from '../wailsjs/go/main/App';
 import {monitor} from '../wailsjs/go/models';
+import {EventsOn} from '../wailsjs/runtime/runtime';
 import * as chat from './chat';
 import * as f from './format';
+import * as past from './history';
 import {bays, h, lead, ledger, meter, nothingRunning, ViewState} from './render';
 import {floor} from './scene';
 
-const REFRESH_MS = 2000;
+// The Go side says when a new scan is ready, so the page does not keep a
+// clock of its own. This one is the net under it: if an event is ever missed
+// the page still catches up.
+const FALLBACK_MS = 10_000;
+// How often the history is fetched again: while it is on screen, while only
+// its two-week strip is, and while old transcripts are still being read.
+const HISTORY_MS = 15_000;
+const HISTORY_IDLE_MS = 60_000;
+const HISTORY_SCAN_MS = 2_000;
+// How long after the chart is drawn as new its columns are left to rise.
+const RISE_MS = 900;
+// How many days the strip in the board's till shows.
+const TREND_DAYS = 14;
 
 // ---- remembered switches ------------------------------------------------------
 
@@ -47,13 +63,56 @@ function remember(name: SwitchName, on: boolean): void {
     }
 }
 
+function recallText(name: string): string {
+    try {
+        return localStorage.getItem(`monitor-agent.${name}`) ?? '';
+    } catch {
+        return '';
+    }
+}
+
+function rememberText(name: string, value: string): void {
+    try {
+        localStorage.setItem(`monitor-agent.${name}`, value);
+    } catch {
+        // As above: a convenience.
+    }
+}
+
+function recallBudget(): number {
+    const n = Number(recallText('budget'));
+    return Number.isFinite(n) && n > 0 && n <= 1_000_000 ? n : 0;
+}
+
 const view: ViewState = {
     hideEnded: recall('hideEnded'),
     privacy: recall('privacy'),
     expanded: new Set(),
     ledgerOpen: recall('ledgerOpen'),
     open: {sessionId: '', agentId: '', projectPath: ''},
+    filter: '',
+    budget: recallBudget(),
 };
+
+// Which of the two pages is on screen: the board of what runs now, or the
+// history of what the days cost.
+type Mode = 'board' | 'history';
+let mode: Mode = 'board';
+let history: monitor.History | null = null;
+let historyProblem = '';
+let historyAt = 0;
+let historyLoading = false;
+let riseUntil = 0;
+const pastState: past.HistState = {
+    range: (past.RANGES as number[]).includes(Number(recallText('histRange'))) ? Number(recallText('histRange')) as past.Range : 30,
+    split: (['project', 'model', 'token'] as string[]).includes(recallText('histSplit')) ? recallText('histSplit') as past.Split : 'project',
+    day: '',
+    fresh: false,
+    tableOpen: false,
+};
+// Where a clicked notification pointed, until the board has been drawn and
+// can be scrolled there.
+let pendingProject = '';
 let notify = recall('notify');
 let snapshot: monitor.Snapshot | null = null;
 let failure = '';
@@ -63,6 +122,8 @@ let optionsProblem = '';
 let actionProblem = '';
 let timer: number | undefined;
 let loading = false;
+// Set when a scan was announced while one was being fetched.
+let stale = false;
 
 // ---- the shell: built once ----------------------------------------------------
 
@@ -102,10 +163,47 @@ const switches = h('div', {class: 'switches'},
         }),
 );
 
-const topBar = h('header', {class: 'top'},
-    h('span', {class: 'brand'}, 'Agent Desk'),
-    h('div', {class: 'top-right'}, switches, stamp),
+function tab(to: Mode, label: string, title: string): HTMLButtonElement {
+    return h('button', {type: 'button', class: 'view-tab', 'data-view': to, title}, label);
+}
+
+const tabs = h('nav', {class: 'views', 'aria-label': 'Trang'},
+    tab('board', 'Bàn làm việc', 'Những gì đang chạy và chi phí của hôm nay'),
+    tab('history', 'Lịch sử', 'Chi phí từng ngày, theo project và model'),
 );
+
+// The filter narrows the board to the rows that carry what is typed. It sits
+// in the bar, outside what is redrawn, so typing is never interrupted.
+const find = h('input', {
+    type: 'search', class: 'find', placeholder: 'Lọc project, session, agent', spellcheck: 'false',
+    'aria-label': 'Lọc bảng theo tên project, session hoặc agent', title: 'Phím tắt: /',
+});
+find.addEventListener('input', () => {
+    view.filter = find.value;
+    render();
+});
+find.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    // The first Esc empties the box; with nothing in it, the box is left.
+    if (find.value !== '') {
+        find.value = '';
+        view.filter = '';
+        render();
+    } else {
+        find.blur();
+    }
+    event.stopPropagation();
+});
+
+const topBar = h('header', {class: 'top'},
+    h('div', {class: 'top-left'}, h('span', {class: 'brand'}, 'Agent Desk'), tabs),
+    h('div', {class: 'top-right'}, find, switches, stamp),
+);
+
+// The readout of one day of the chart. It follows the pointer and the
+// keyboard, and lives outside what is redrawn.
+const tip = h('div', {class: 'tip', role: 'tooltip', hidden: true});
+let tipDay = '';
 // The credit line at the foot of the page. Each link names an address the Go
 // side holds; the page passes the name, never an address.
 const credit = h('footer', {class: 'credit'},
@@ -119,7 +217,7 @@ const credit = h('footer', {class: 'credit'},
         title: 'Mở https://www.linkedin.com/in/khoanguyenit/ trong trình duyệt',
     }, 'LinkedIn'),
 );
-root.append(topBar, content, credit);
+root.append(topBar, content, credit, tip);
 
 // The board's heading row sticks just under the top bar, and a desk scrolls
 // its project clear of both. The bar wraps onto two lines in a narrow window,
@@ -214,6 +312,28 @@ function render(): void {
         ? {...snapshot, warnings: [...snapshot.warnings, ...extra]} as monitor.Snapshot
         : snapshot;
     view.open = chat.current();
+    for (const t of Array.from(tabs.children) as HTMLElement[]) {
+        const on = t.dataset.view === mode;
+        t.classList.toggle('is-on', on);
+        if (on) t.setAttribute('aria-current', 'page');
+        else t.removeAttribute('aria-current');
+    }
+    document.body.dataset.mode = mode;
+
+    if (mode === 'history') {
+        pastState.fresh = Date.now() < riseUntil;
+        // A day picked under another stretch may not be on the chart any more.
+        if (pastState.day && !(history?.days ?? []).slice(-pastState.range).some(d => d.day === pastState.day)) pastState.day = '';
+        const page = h('div', null,
+            actionProblem && h('p', {class: 'warning hist-problem', 'data-key': 'problem'},
+                h('span', {class: 'warning-mark', 'aria-hidden': 'true'}, '!'), actionProblem),
+            past.historyView(history, pastState, historyProblem, view.budget));
+        keepFocus(() => patch(content, page));
+        drawTip();
+        return;
+    }
+    hideTip();
+
     // A project the user added is worth showing even with no session in it.
     const nothing = shown.counts.sessions === 0 && shown.projects.length === 0;
     // With nothing to list there is nothing for the list switches to act on.
@@ -223,23 +343,52 @@ function render(): void {
     // it costs (the meter). Each part is patched on its own, so the floor's
     // figures keep moving while the figures in the meter change.
     const overview = h('div', {class: 'overview', 'data-key': 'overview', 'data-container': true},
-        lead(shown), floor(shown, view.open.projectPath), ...meter(shown, view));
+        lead(shown), floor(shown, view.open.projectPath), ...meter(shown, view, past.trend(history, TREND_DAYS)));
     const next = nothing
         ? h('div', null, nothingRunning(shown))
         : h('div', null, overview, view.ledgerOpen && ledger(shown), bays(shown, view));
 
+    keepFocus(() => patch(content, next));
+
+    if (pendingProject) {
+        const bay = bayOf(pendingProject);
+        pendingProject = '';
+        bay?.scrollIntoView({behavior: 'auto', block: 'start'});
+    }
+}
+
+// keepFocus runs a redraw and gives focus back to the control that had it, if
+// the redraw replaced that control with its successor.
+function keepFocus(draw: () => void): void {
     const focused = document.activeElement as HTMLElement | null;
     const focusKey = focused && content.contains(focused) ? focused.dataset.fkey : undefined;
-    patch(content, next);
+    draw();
     if (focusKey && !content.contains(document.activeElement)) {
-        // The focused control was redrawn. Give focus back to its successor
-        // without scrolling: the user may have scrolled elsewhere since.
+        // Without scrolling: the user may have scrolled elsewhere since.
         content.querySelector<HTMLElement>(`[data-fkey="${CSS.escape(focusKey)}"]`)?.focus({preventScroll: true});
     }
 }
 
+function bayOf(projectPath: string): HTMLElement | undefined {
+    const key = `bay:${projectPath}`;
+    return Array.from(content.querySelectorAll<HTMLElement>('.bay')).find(el => el.dataset.key === key);
+}
+
+function draw(): void {
+    try {
+        render();
+    } catch (err) {
+        // A rendering fault must not stop the refresh loop.
+        failure = err instanceof Error ? err.message : String(err);
+        console.error(err);
+    }
+}
+
 async function refresh(): Promise<void> {
-    if (loading) return;
+    if (loading) {
+        stale = true;
+        return;
+    }
     loading = true;
     try {
         snapshot = await GetSnapshot();
@@ -250,13 +399,29 @@ async function refresh(): Promise<void> {
     } finally {
         loading = false;
     }
-    try {
-        render();
-    } catch (err) {
-        // A rendering fault must not stop the refresh loop.
-        failure = err instanceof Error ? err.message : String(err);
-        console.error(err);
+    draw();
+    // The history follows at its own, slower pace.
+    const wait = history?.scan.running ? HISTORY_SCAN_MS : mode === 'history' ? HISTORY_MS : HISTORY_IDLE_MS;
+    if (Date.now() - historyAt >= wait) void loadHistory();
+    if (stale) {
+        stale = false;
+        void refresh();
     }
+}
+
+async function loadHistory(): Promise<void> {
+    if (historyLoading) return;
+    historyLoading = true;
+    historyAt = Date.now();
+    try {
+        history = await GetHistory(past.FETCH_DAYS);
+        historyProblem = '';
+    } catch (err) {
+        historyProblem = err instanceof Error ? err.message : String(err);
+    } finally {
+        historyLoading = false;
+    }
+    draw();
 }
 
 function schedule(): void {
@@ -264,13 +429,159 @@ function schedule(): void {
     if (document.hidden) return;
     timer = window.setTimeout(() => {
         void refresh().finally(schedule);
-    }, REFRESH_MS);
+    }, FALLBACK_MS);
 }
+
+function setMode(to: Mode): void {
+    if (mode === to) return;
+    mode = to;
+    actionProblem = '';
+    if (to === 'history') {
+        riseUntil = Date.now() + RISE_MS;
+        void loadHistory();
+    }
+    window.scrollTo({top: 0});
+    draw();
+}
+
+// ---- the readout of a day ------------------------------------------------------
+
+function hideTip(): void {
+    tipDay = '';
+    tip.hidden = true;
+}
+
+// drawTip fills the readout for the day it is on and sets it beside that
+// day's column, at the top of the plot and inside the window.
+function drawTip(): void {
+    if (!tipDay || !history || mode !== 'history') {
+        hideTip();
+        return;
+    }
+    const col = Array.from(content.querySelectorAll<HTMLElement>('.hc-col')).find(el => el.dataset.histDay === tipDay);
+    const body = col ? past.dayReadout(history, pastState, tipDay) : null;
+    if (!col || !body) {
+        hideTip();
+        return;
+    }
+    tip.replaceChildren(body);
+    tip.hidden = false;
+    const at = col.getBoundingClientRect();
+    const frame = col.closest<HTMLElement>('.hc-frame')?.getBoundingClientRect() ?? at;
+    const size = tip.getBoundingClientRect();
+    // To the right of the day, or to its left when the window ends there:
+    // the day itself and the figures around the chart stay in sight.
+    const wide = document.documentElement.clientWidth;
+    let left = at.right + 10;
+    if (left + size.width > wide - 8) left = at.left - size.width - 10;
+    left = Math.max(8, left);
+    const top = Math.max(topBar.getBoundingClientRect().bottom + 4,
+        Math.min(frame.top + 8, document.documentElement.clientHeight - size.height - 8));
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+}
+
+function pointTip(target: EventTarget | null): void {
+    const col = (target as HTMLElement | null)?.closest?.<HTMLElement>('.hc-col');
+    const day = col?.dataset.histDay ?? '';
+    if (day === tipDay) return;
+    tipDay = day;
+    drawTip();
+}
+
+content.addEventListener('pointerover', event => pointTip(event.target));
+content.addEventListener('pointerleave', () => hideTip());
+content.addEventListener('focusin', event => pointTip(event.target));
+content.addEventListener('focusout', event => {
+    if (!(event.relatedTarget as HTMLElement | null)?.closest?.('.hc-col')) hideTip();
+});
+window.addEventListener('scroll', () => {
+    if (tipDay) drawTip();
+}, {passive: true});
+
+// The chart is one stop for the Tab key; the arrow keys walk its days.
+content.addEventListener('keydown', event => {
+    const col = (event.target as HTMLElement).closest<HTMLElement>('.hc-col');
+    if (!col) return;
+    const all = Array.from(col.parentElement?.querySelectorAll<HTMLElement>('.hc-col') ?? []);
+    const i = all.indexOf(col);
+    const to = event.key === 'ArrowLeft' ? i - 1 : event.key === 'ArrowRight' ? i + 1
+        : event.key === 'Home' ? 0 : event.key === 'End' ? all.length - 1 : -1;
+    if (to < 0 || to >= all.length || to === i) return;
+    event.preventDefault();
+    all[to].focus();
+});
+
+content.addEventListener('change', event => {
+    const box = event.target as HTMLInputElement;
+    if (!box.matches?.('[data-hist-budget]')) return;
+    const n = box.value.trim() === '' ? 0 : Number(box.value);
+    if (!Number.isFinite(n) || n < 0 || n > 1_000_000) {
+        actionProblem = 'Ngưỡng chi phí phải là một số từ 0 tới 1.000.000 USD.';
+        render();
+        return;
+    }
+    view.budget = n;
+    rememberText('budget', String(n));
+    void SetBudget(n).then(problem => {
+        actionProblem = problem;
+        render();
+    }, err => {
+        actionProblem = err instanceof Error ? err.message : String(err);
+        render();
+    });
+});
 
 // ---- interaction --------------------------------------------------------------
 
 content.addEventListener('click', event => {
     const target = event.target as HTMLElement;
+
+    const go = target.closest<HTMLElement>('[data-view]');
+    if (go) {
+        setMode(go.dataset.view as Mode);
+        return;
+    }
+
+    // ---- the history page ----
+    const range = target.closest<HTMLElement>('[data-hist-range]');
+    if (range) {
+        pastState.range = Number(range.dataset.histRange) as past.Range;
+        rememberText('histRange', String(pastState.range));
+        riseUntil = Date.now() + RISE_MS;
+        render();
+        return;
+    }
+    const split = target.closest<HTMLElement>('[data-hist-split]');
+    if (split) {
+        pastState.split = split.dataset.histSplit as past.Split;
+        rememberText('histSplit', pastState.split);
+        riseUntil = Date.now() + RISE_MS;
+        render();
+        return;
+    }
+    const day = target.closest<HTMLElement>('[data-hist-day]');
+    if (day) {
+        // A day that is picked again is let go.
+        pastState.day = pastState.day === day.dataset.histDay ? '' : day.dataset.histDay!;
+        render();
+        return;
+    }
+    if (target.closest('[data-hist-table]')) {
+        pastState.tableOpen = !pastState.tableOpen;
+        render();
+        return;
+    }
+    if (target.closest('[data-hist-export]')) {
+        void ExportHistory(pastState.range).then(problem => {
+            actionProblem = problem;
+            render();
+        }, err => {
+            actionProblem = err instanceof Error ? err.message : String(err);
+            render();
+        });
+        return;
+    }
 
     const fold = target.closest<HTMLElement>('[data-toggle-session]');
     if (fold) {
@@ -291,8 +602,7 @@ content.addEventListener('click', event => {
     const desk = target.closest<HTMLElement>('[data-scroll-project]');
     if (desk) {
         // A desk on the floor leads to its project's block further down.
-        const key = `bay:${desk.dataset.scrollProject}`;
-        const bay = Array.from(content.querySelectorAll<HTMLElement>('.bay')).find(el => el.dataset.key === key);
+        const bay = bayOf(desk.dataset.scrollProject!);
         const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         bay?.scrollIntoView({behavior: calm ? 'auto' : 'smooth', block: 'start'});
         return;
@@ -374,6 +684,10 @@ credit.addEventListener('click', event => {
 // The side panel sits beside the board, outside the part that is redrawn. The
 // board marks what the panel shows, so it is drawn again when that changes.
 chat.mount(root, () => render());
+tabs.addEventListener('click', event => {
+    const to = (event.target as HTMLElement).closest<HTMLElement>('[data-view]');
+    if (to) setMode(to.dataset.view as Mode);
+});
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
         window.clearTimeout(timer);
@@ -382,6 +696,38 @@ document.addEventListener('visibilitychange', () => {
     void refresh().finally(schedule);
 });
 
+// "/" goes to the filter, from anywhere a key is not being typed into a box.
+document.addEventListener('keydown', event => {
+    if (event.key !== '/' || event.ctrlKey || event.altKey || event.metaKey) return;
+    const el = event.target as HTMLElement;
+    if (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+    event.preventDefault();
+    setMode('board');
+    find.focus();
+    find.select();
+});
+
+// The Go side scans on its own clock and says when a scan is ready; the page
+// fetches it then, unless nobody is looking.
+EventsOn('snapshot', () => {
+    if (document.hidden) return;
+    void refresh().finally(schedule);
+});
+EventsOn('history', () => void loadHistory());
+// A notification was clicked: go to what it was about.
+EventsOn('focus', (to: { projectPath?: string; sessionId?: string; chat?: boolean } | null) => {
+    if (!to) return;
+    setMode('board');
+    if (to.chat && to.sessionId) {
+        chat.open(to.sessionId);
+        return;
+    }
+    pendingProject = to.projectPath ?? '';
+    void refresh();
+});
+
 render();
 void pushOptions(false);
+if (view.budget > 0) void SetBudget(view.budget).catch(() => { /* said again when it is next changed */ });
 void refresh().finally(schedule);
+void loadHistory();

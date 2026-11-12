@@ -71,3 +71,63 @@ export function hourMinute(ms: number): string {
     const d = new Date(ms);
     return `${two(d.getHours())}:${two(d.getMinutes())}`;
 }
+
+// ---- calendar days -------------------------------------------------------------
+
+// A day travels as "2026-11-12", the local date the Go side filed it under.
+// It is taken apart by hand: handing the text to Date would read it as UTC.
+function dayParts(day: string): [number, number, number] {
+    return [Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10))];
+}
+
+export function dayDate(day: string): Date {
+    const [y, m, d] = dayParts(day);
+    return new Date(y, m - 1, d);
+}
+
+const WEEKDAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const WEEKDAYS_LONG = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
+
+/** 0 for Sunday to 6 for Saturday. */
+export function weekday(day: string): number {
+    return dayDate(day).getDay();
+}
+
+/** "04/11" */
+export function dayShort(day: string): string {
+    return `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+}
+
+/** "T3 04/11" */
+export function dayLabel(day: string): string {
+    return `${WEEKDAYS[weekday(day)]} ${dayShort(day)}`;
+}
+
+/** "Thứ ba, 04/11/2026" */
+export function dayLong(day: string): string {
+    return `${WEEKDAYS_LONG[weekday(day)]}, ${dayShort(day)}/${day.slice(0, 4)}`;
+}
+
+/** "tháng 11" */
+export function monthLabel(day: string): string {
+    return `tháng ${Number(day.slice(5, 7))}`;
+}
+
+// usdAxis is for the ticks of a cost axis: whole dollars where they are whole,
+// short above a thousand, so every tick of one axis reads in the same style.
+export function usdAxis(n: number): string {
+    if (n <= 0) return '$0';
+    if (n >= 10_000) return '$' + Math.round(n / 1_000) + 'k';
+    if (n >= 1_000) return '$' + (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+    if (n >= 10 || Number.isInteger(n)) return '$' + Math.round(n);
+    return '$' + n.toFixed(n < 1 ? 2 : 1);
+}
+
+// change says how a figure moved against the one it is compared with, as a
+// whole percentage; empty when there is nothing to compare with.
+export function change(now: number, before: number): string {
+    if (before <= 0) return '';
+    const p = Math.round(((now - before) / before) * 100);
+    if (p === 0) return 'ngang với';
+    return p > 0 ? `nhiều hơn ${p}% so với` : `ít hơn ${-p}% so với`;
+}
