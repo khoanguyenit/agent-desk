@@ -258,6 +258,7 @@ type Transcript struct {
 	SessionID string
 	Path      string
 	ModTime   time.Time
+	Size      int64
 }
 
 // TranscriptsSince lists the main transcripts under configDir that were
@@ -291,7 +292,7 @@ func TranscriptsSince(configDir string, since time.Time) []Transcript {
 			if err != nil || info.ModTime().Before(since) {
 				continue
 			}
-			out = append(out, Transcript{SessionID: id, Path: filepath.Join(dir, name), ModTime: info.ModTime()})
+			out = append(out, Transcript{SessionID: id, Path: filepath.Join(dir, name), ModTime: info.ModTime(), Size: info.Size()})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })

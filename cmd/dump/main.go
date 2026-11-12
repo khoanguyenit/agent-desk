@@ -1,35 +1,72 @@
 // Command dump prints the same snapshot the desktop app shows. It exists for
 // checking the numbers from a terminal.
 //
-//	go run ./cmd/dump          one line per session and agent
-//	go run ./cmd/dump -json    the full snapshot as JSON
+//	go run ./cmd/dump               one line per session and agent
+//	go run ./cmd/dump -json         the full snapshot as JSON
+//	go run ./cmd/dump -history 30   cost per day for the last 30 days
+//
+// The history it prints is read from the transcripts each time and kept in
+// memory only: the app's own history file is neither read nor written.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
+	"monitor-agent/internal/history"
 	"monitor-agent/internal/monitor"
 )
 
+func printJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
 func main() {
-	asJSON := flag.Bool("json", false, "print the full snapshot as JSON")
+	asJSON := flag.Bool("json", false, "print as JSON")
+	days := flag.Int("history", 0, "print the cost per day for this many days instead of the snapshot")
 	flag.Parse()
 
+	ledger, _ := history.Open("")
+	svc := monitor.New(monitor.Options{History: ledger})
 	start := time.Now()
-	snap := monitor.New(monitor.Options{}).Snapshot()
+	snap := svc.Snapshot()
 	took := time.Since(start)
 
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(snap); err != nil {
+	if *days > 0 {
+		start = time.Now()
+		if err := svc.Backfill(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		h := svc.History(*days)
+		if *asJSON {
+			printJSON(h)
+			return
+		}
+		fmt.Printf("%d transcripts read in %s; history goes back to %s\n", h.Scan.Total, time.Since(start).Round(time.Millisecond), h.FirstDay)
+		for _, d := range h.Days {
+			if d.Spend.TotalTokens == 0 {
+				continue
+			}
+			fmt.Printf("%s  %2d session  %s\n", d.Day, d.Sessions, d.Spend)
+			for _, p := range d.Projects {
+				fmt.Printf("    %-28.28s $%.4f\n", p.Name, p.CostUSD)
+			}
+		}
+		return
+	}
+
+	if *asJSON {
+		printJSON(snap)
 		return
 	}
 

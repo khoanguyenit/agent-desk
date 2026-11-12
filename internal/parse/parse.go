@@ -114,6 +114,9 @@ type File struct {
 	seen            map[string]counted
 	pulse           map[int64]int
 	pulseMax        int64
+	// version goes up every time the state changes: when lines are taken in,
+	// and when the file is found replaced and read again from the start.
+	version int64
 }
 
 // NewFile prepares to read path. loc decides which calendar day a response
@@ -130,6 +133,7 @@ func NewFile(path string, loc *time.Location, acceptSidechain bool) *File {
 }
 
 func (f *File) reset() {
+	f.version++
 	f.Usage = map[Key]usage.Tokens{}
 	f.seen = map[string]counted{}
 	f.pulse = map[int64]int{}
@@ -219,6 +223,7 @@ func (f *File) Update() error {
 		}
 		f.offset += n
 		f.lineNo++
+		f.version++
 		if oversize {
 			f.BadLines++
 			continue
@@ -698,3 +703,9 @@ func (f *File) Pulse(now time.Time, n int) []int {
 
 // Offset is how many bytes of the file have been consumed.
 func (f *File) Offset() int64 { return f.offset }
+
+// Version changes whenever what the file adds up to may have changed: after
+// an Update that took in at least one line, and after the file was found
+// replaced. Two calls that return the same value saw the same state, so
+// anything worked out from it can be kept until the value moves.
+func (f *File) Version() int64 { return f.version }

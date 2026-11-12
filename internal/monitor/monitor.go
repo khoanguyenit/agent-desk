@@ -5,6 +5,7 @@ package monitor
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"monitor-agent/internal/clean"
+	"monitor-agent/internal/history"
 	"monitor-agent/internal/parse"
 	"monitor-agent/internal/pricing"
 	"monitor-agent/internal/scan"
@@ -268,6 +270,10 @@ type Options struct {
 	Alive       scan.AliveFunc
 	Now         func() time.Time
 	Location    *time.Location
+	// History, when given, is told what every session on the board consumed
+	// day by day, and is what History reports from. Without it no history is
+	// kept.
+	History *history.Ledger
 }
 
 type fileEntry struct {
@@ -301,7 +307,80 @@ type Service struct {
 	ended    []endedTranscript
 	endedAt  time.Time
 	endedFor string
+
+	// usages holds what each session's transcripts add up to, by the path of
+	// its main transcript, for as long as none of them has changed. lists
+	// holds the subagent transcripts found for a session.
+	usages map[string]*sessionUsage
+	lists  map[string]*agentList
+	// closed is the sessions listed as closed in the latest snapshot, by id.
+	// Only those can be looked into after they have ended.
+	closed map[string]closedRef
+	priced priceCache
+	trail  trailCache
+
+	ledger *history.Ledger
+	scanMu sync.Mutex
+	scan   HistoryScan
+	// filling is held by the one pass over old transcripts that may run.
+	filling sync.Mutex
 }
+
+// closedRef is where a session that closed today left its transcripts.
+type closedRef struct {
+	path   string
+	cwd    string
+	agents []scan.AgentFile
+}
+
+// priceCache is the price table as last loaded, with what the override file
+// looked like then.
+type priceCache struct {
+	loaded bool
+	mod    time.Time
+	size   int64
+	table  pricing.Table
+	err    error
+}
+
+// sessionUsage is what the transcripts of one session add up to. Working it
+// out walks every response of every agent, so it is kept for as long as none
+// of the files has changed.
+type sessionUsage struct {
+	// paths are the agent transcripts it was made from, in order; versions
+	// has the main transcript first, then one for each of them.
+	paths    []string
+	versions []int64
+	// agents is what each agent consumed without the responses that are
+	// counted elsewhere; merged is the main thread and all of them together.
+	agents []map[parse.Key]usage.Tokens
+	merged map[parse.Key]usage.Tokens
+}
+
+func (u *sessionUsage) matches(main *parse.File, paths []string, agents []*parse.File) bool {
+	if u == nil || len(u.versions) != len(agents)+1 || u.versions[0] != main.Version() || !slices.Equal(u.paths, paths) {
+		return false
+	}
+	for i, f := range agents {
+		if u.versions[i+1] != f.Version() {
+			return false
+		}
+	}
+	return true
+}
+
+// agentList is the subagent transcripts of a session as last listed.
+type agentList struct {
+	files []scan.AgentFile
+	at    time.Time
+	// active is true when one of them was still at work at the last look.
+	active bool
+}
+
+// listEvery is how long the list of a session's agents is reused while
+// nothing is at work in it. New agents appear only when something runs, so a
+// session at rest does not have its folders walked on every refresh.
+const listEvery = 10 * time.Second
 
 type endedTranscript struct {
 	scan.Transcript
@@ -322,6 +401,10 @@ func New(o Options) *Service {
 		loc:         o.Location,
 		files:       map[string]*fileEntry{},
 		metas:       map[string]metaEntry{},
+		usages:      map[string]*sessionUsage{},
+		lists:       map[string]*agentList{},
+		closed:      map[string]closedRef{},
+		ledger:      o.History,
 	}
 	if s.configDir == "" {
 		s.configDir, s.configErr = scan.ConfigDir()
@@ -413,7 +496,7 @@ func (s *Service) Snapshot() Snapshot {
 		Warnings:      []string{},
 	}
 
-	prices, err := pricing.Load(s.pricingPath)
+	prices, err := s.prices()
 	if err != nil {
 		snap.Warnings = append(snap.Warnings, "Bảng giá tuỳ chỉnh bị lỗi, đang dùng bảng giá mặc định: "+clean.Text(err.Error(), pathRunes))
 	}
@@ -509,6 +592,7 @@ func (s *Service) Snapshot() Snapshot {
 	// Sessions that closed today are added to the totals, and listed under
 	// their project, from the transcripts they left behind.
 	var closedAll, closedToday acc
+	clear(s.closed)
 	for _, e := range s.ended {
 		if live[e.SessionID] || b.tallied[e.Path] {
 			continue
@@ -518,6 +602,7 @@ func (s *Service) Snapshot() Snapshot {
 			continue
 		}
 		b.tallied[e.Path] = true
+		s.closed[e.SessionID] = closedRef{path: e.Path, cwd: cwd, agents: e.agents}
 		key := projectKey(cwd)
 		if cwd == "" {
 			// Nothing in the transcript says where it ran: such sessions
@@ -558,6 +643,16 @@ func (s *Service) Snapshot() Snapshot {
 	for path := range s.metas {
 		if _, ok := s.files[transcriptOf(path)]; !ok {
 			delete(s.metas, path)
+		}
+	}
+	for path := range s.usages {
+		if _, ok := s.files[path]; !ok {
+			delete(s.usages, path)
+		}
+	}
+	for path := range s.lists {
+		if _, ok := s.files[path]; !ok {
+			delete(s.lists, path)
 		}
 	}
 
@@ -720,6 +815,76 @@ func ownResponses(f, main *parse.File, claimed map[string]bool) map[parse.Key]us
 	return out
 }
 
+// usage returns what a session's transcripts add up to: each agent's own
+// responses, and everything together. It is worked out again only when one of
+// the files has changed since the last time; fresh says that it was.
+func (b *build) usage(mainPath string, main *parse.File, paths []string, agents []*parse.File) (u *sessionUsage, fresh bool) {
+	if u = b.s.usages[mainPath]; u.matches(main, paths, agents) {
+		return u, false
+	}
+	u = &sessionUsage{
+		paths:    slices.Clone(paths),
+		versions: make([]int64, 0, len(agents)+1),
+		agents:   make([]map[parse.Key]usage.Tokens, len(agents)),
+		merged:   maps.Clone(main.Usage),
+	}
+	u.versions = append(u.versions, main.Version())
+	claimed := map[string]bool{}
+	for i, f := range agents {
+		u.versions = append(u.versions, f.Version())
+		own := ownResponses(f, main, claimed)
+		u.agents[i] = own
+		for k, tk := range own {
+			cur := u.merged[k]
+			cur.Add(tk)
+			u.merged[k] = cur
+		}
+	}
+	b.s.usages[mainPath] = u
+	return u, true
+}
+
+// agentFiles lists the subagent transcripts of the session whose main
+// transcript is path. The folders are walked again when the session is busy,
+// when one of its agents was still at work, or when the list has aged.
+func (b *build) agentFiles(path string, busy bool) *agentList {
+	l := b.s.lists[path]
+	if l == nil {
+		l = &agentList{}
+		b.s.lists[path] = l
+	} else if !busy && !l.active && !b.now.Before(l.at) && b.now.Sub(l.at) < listEvery {
+		return l
+	}
+	l.files, l.at = scan.AgentFiles(path), b.now
+	return l
+}
+
+// record hands a session's consumption to the history, when one is kept.
+func (b *build) record(sessionID, cwd string, merged map[parse.Key]usage.Tokens) {
+	if b.s.ledger != nil {
+		b.s.ledger.Record(sessionID, cwd, rowsOf(merged))
+	}
+}
+
+// prices returns the price table, read again only when the override file has
+// changed. The caller holds s.mu.
+func (s *Service) prices() (pricing.Table, error) {
+	var mod time.Time
+	size := int64(-1)
+	if s.pricingPath != "" {
+		if st, err := os.Stat(s.pricingPath); err == nil {
+			mod, size = st.ModTime(), st.Size()
+		}
+	}
+	c := &s.priced
+	if c.loaded && c.size == size && c.mod.Equal(mod) {
+		return c.table, c.err
+	}
+	c.table, c.err = pricing.Load(s.pricingPath)
+	c.loaded, c.mod, c.size = true, mod, size
+	return c.table, c.err
+}
+
 // closed adds up a session that has ended, from the transcripts it left on
 // disk. ok is false when the session did nothing today: such a one is neither
 // listed nor counted, and leaves no trace in the totals per model.
@@ -728,17 +893,19 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 	if !read {
 		return cs, "", all, today, false
 	}
-	parts := []map[parse.Key]usage.Tokens{f.Usage}
-	claimed := map[string]bool{}
-	agents := 0
+	var paths []string
+	var states []*parse.File
 	for _, af := range e.agents {
 		fa, read := b.file(af.Path, true)
 		if !read {
 			continue
 		}
-		agents++
-		parts = append(parts, ownResponses(fa, f, claimed))
+		paths = append(paths, af.Path)
+		states = append(states, fa)
 	}
+	agents := len(states)
+	u, fresh := b.usage(e.Path, f, paths, states)
+	parts := append([]map[parse.Key]usage.Tokens{f.Usage}, u.agents...)
 	atWorkToday := false
 	for _, part := range parts {
 		for k := range part {
@@ -752,6 +919,9 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 		a, t := b.price(part, true)
 		all.add(a)
 		today.add(t)
+	}
+	if fresh {
+		b.record(e.SessionID, f.Cwd, u.merged)
 	}
 
 	ended := f.LastAt
@@ -785,7 +955,7 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 		Version:         clean.Text(rs.Version, labelRunes),
 		StartedAtMs:     ms(rs.StartedAt),
 		Agents:          []Agent{},
-		Pulse:           make([]int, PulseMinutes),
+		Pulse:           []int{},
 		RecordedCostUSD: -1,
 	}
 	var all, today acc
@@ -812,7 +982,11 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 	sess.ContextTokens = f.ContextTokens
 	sess.LastPrompt = f.LastPrompt
 	sess.Activity = activity(f.Last, rs.Cwd)
-	sess.Pulse = f.Pulse(b.now, PulseMinutes)
+	if rs.Status == "busy" {
+		// The pulse is a sign of life. It is drawn only for what is still
+		// working, so it is not sent for anything else.
+		sess.Pulse = f.Pulse(b.now, PulseMinutes)
+	}
 	if f.HasRecordedCost {
 		sess.RecordedCostUSD = f.RecordedCostUSD
 	}
@@ -822,12 +996,22 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 	all.add(own)
 	today.add(ownToday)
 
-	claimed := map[string]bool{}
-	for _, af := range scan.AgentFiles(path) {
-		a, aAll, aToday, ok := b.agent(af, rs.Cwd, f, claimed, count)
+	list := b.agentFiles(path, rs.Status == "busy")
+	var found []scan.AgentFile
+	var paths []string
+	var states []*parse.File
+	for _, af := range list.files {
+		fa, ok := b.file(af.Path, true)
 		if !ok {
 			continue
 		}
+		found = append(found, af)
+		paths = append(paths, af.Path)
+		states = append(states, fa)
+	}
+	u, fresh := b.usage(path, f, paths, states)
+	for i, af := range found {
+		a, aAll, aToday := b.agent(af, states[i], rs.Cwd, u.agents[i], count)
 		sess.Agents = append(sess.Agents, a)
 		if a.Status == StatusRunning || a.Status == StatusQuiet {
 			sess.ActiveAgents++
@@ -835,7 +1019,11 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 		all.add(aAll)
 		today.add(aToday)
 	}
+	list.active = sess.ActiveAgents > 0
 	sortAgents(sess.Agents)
+	if count && fresh {
+		b.record(rs.SessionID, rs.Cwd, u.merged)
+	}
 
 	sess.All, sess.Today = all.spend(), today.spend()
 	return sess, all, today
@@ -861,11 +1049,9 @@ func (b *build) meta(path string) (scan.AgentMeta, time.Time) {
 	return m, st.ModTime()
 }
 
-func (b *build) agent(af scan.AgentFile, cwd string, main *parse.File, claimed map[string]bool, count bool) (Agent, acc, acc, bool) {
-	f, ok := b.file(af.Path, true)
-	if !ok {
-		return Agent{}, acc{}, acc{}, false
-	}
+// agent describes one subagent from its transcript f. own is what it consumed
+// without the responses counted elsewhere; see ownResponses.
+func (b *build) agent(af scan.AgentFile, f *parse.File, cwd string, own map[parse.Key]usage.Tokens, count bool) (Agent, acc, acc) {
 	meta, metaMod := b.meta(af.MetaPath)
 
 	model := f.Model
@@ -889,7 +1075,7 @@ func (b *build) agent(af scan.AgentFile, cwd string, main *parse.File, claimed m
 		ContextTokens: f.ContextTokens,
 		ToolUses:      f.ToolUses,
 		Activity:      activity(f.Last, cwd),
-		Pulse:         f.Pulse(b.now, PulseMinutes),
+		Pulse:         []int{},
 	}
 	if a.Description == "" {
 		a.Description = a.Type
@@ -927,6 +1113,9 @@ func (b *build) agent(af scan.AgentFile, cwd string, main *parse.File, claimed m
 		a.Status = StatusStopped
 	}
 	a.SilentMs = silent.Milliseconds()
+	if a.Status == StatusRunning || a.Status == StatusQuiet {
+		a.Pulse = f.Pulse(b.now, PulseMinutes)
+	}
 
 	if !f.FirstAt.IsZero() {
 		end := f.LastAt
@@ -938,9 +1127,9 @@ func (b *build) agent(af scan.AgentFile, cwd string, main *parse.File, claimed m
 		}
 	}
 
-	all, today := b.price(ownResponses(f, main, claimed), count)
+	all, today := b.price(own, count)
 	a.All, a.Today = all.spend(), today.spend()
-	return a, all, today, true
+	return a, all, today
 }
 
 // sortAgents puts agents that are still working first, most recently started

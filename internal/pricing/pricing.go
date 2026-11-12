@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"maps"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 
@@ -224,6 +225,16 @@ func allDigits(s string) bool {
 		}
 	}
 	return s != ""
+}
+
+// Models lists the ids of every model in the table, in alphabetical order.
+func (t Table) Models() []string {
+	out := make([]string, 0, len(t.models))
+	for id := range t.models {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Lookup returns the rates for a model. Only an exact match after Normalize
