@@ -961,15 +961,19 @@ export function bays(snap: monitor.Snapshot, view: ViewState): HTMLElement {
                         : p.name),
                 p.sessions.length > 1 && h('span', {class: 'bay-sum'},
                     `${p.sessions.length} session · ${f.tokens(p.all.totalTokens)} token · ${f.usd(p.all.costUsd)}`),
+                // "Session mới" stays last, against the right edge, so it
+                // lines up from bay to bay. The removal button, which keeps
+                // its room while it is out of sight, goes before it: shown,
+                // it moves nothing.
                 h('span', {class: 'bay-acts'},
-                    h('button', {
-                        type: 'button', class: 'act', 'data-new-session': p.path, 'data-project-name': p.name,
-                        'data-fkey': `new-${p.path}`, title: `Mở một session Claude Code mới tại ${p.path} và chat ngay trong app`,
-                    }, 'Session mới'),
                     (p as Project).pinned && h('button', {
                         type: 'button', class: 'act act-quiet', 'data-remove-project': p.path, 'data-fkey': `rm-${p.path}`,
                         title: 'Bỏ project này khỏi danh sách đã thêm. Thư mục và các session không bị ảnh hưởng.',
                     }, 'Bỏ khỏi danh sách'),
+                    h('button', {
+                        type: 'button', class: 'act', 'data-new-session': p.path, 'data-project-name': p.name,
+                        'data-fkey': `new-${p.path}`, title: `Mở một session Claude Code mới tại ${p.path} và chat ngay trong app`,
+                    }, 'Session mới'),
                 ),
             ),
         );
