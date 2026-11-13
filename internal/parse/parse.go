@@ -746,8 +746,11 @@ func toolDetail(input json.RawMessage) (detail string, isPath bool, note string)
 }
 
 // report returns the text of a subagent's final result, whichever field the
-// terminal tool carries it in. An unrecognised shape yields nothing, and the
-// agent is simply shown as having returned a result.
+// terminal tool carries it in. A structured result, which a workflow's agent
+// returns in a shape of its workflow's choosing, has none of those fields; it
+// is laid out as its own fields, one "name: value" per line, in the order
+// written. Anything else yields nothing, and the agent is simply shown as
+// having returned a result.
 func report(input json.RawMessage) string {
 	var fields map[string]json.RawMessage
 	if len(input) == 0 || json.Unmarshal(input, &fields) != nil {
@@ -759,7 +762,76 @@ func report(input json.RawMessage) string {
 			return s
 		}
 	}
-	return ""
+	return fieldsText(input)
+}
+
+// reportFields bounds how many fields of a structured result are laid out.
+const reportFields = 8
+
+// fieldsText lays out the top-level fields of a JSON object in the order they
+// are written, one "name: value" per line. A list shows its first entry and
+// how many follow; an object nested inside is only marked as one.
+func fieldsText(input json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(input))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return ""
+	}
+	var lines []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		name, _ := tok.(string)
+		var v json.RawMessage
+		if dec.Decode(&v) != nil {
+			break
+		}
+		if len(lines) == reportFields {
+			lines = append(lines, "…")
+			break
+		}
+		if s := valueText(v); s != "" && name != "" {
+			lines = append(lines, name+": "+s)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func valueText(v json.RawMessage) string {
+	v = bytes.TrimSpace(v)
+	if len(v) == 0 {
+		return ""
+	}
+	switch v[0] {
+	case '"':
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			return ""
+		}
+		return strings.Join(strings.Fields(s), " ")
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(v, &items) != nil {
+			return ""
+		}
+		if len(items) == 0 {
+			return "(trống)"
+		}
+		first := valueText(items[0])
+		if first == "" || first == "{…}" {
+			return strconv.Itoa(len(items)) + " mục"
+		}
+		if len(items) > 1 {
+			return first + " (và " + strconv.Itoa(len(items)-1) + " mục nữa)"
+		}
+		return first
+	case '{':
+		return "{…}"
+	default:
+		// A number, true, false or null, as written.
+		return string(v)
+	}
 }
 
 var (

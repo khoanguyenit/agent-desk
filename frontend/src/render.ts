@@ -660,7 +660,7 @@ function sessionLabel(id: string): string {
     return `Session ${id.slice(0, 8)}`;
 }
 
-function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState): HTMLElement {
+function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState, inRun = false): HTMLElement {
     const st = agentStatus(a);
     const name = view.privacy ? a.type || 'Agent' : a.description || a.id;
     const meta = [
@@ -674,7 +674,7 @@ function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState)
     const open = view.open.sessionId === sessionId && view.open.agentId === a.id;
     // The whole row opens the agent's steps; the name is the button a
     // keyboard reaches.
-    return h('li', {class: `strip ${st.cls}` + (beat ? '' : ' no-pulse') + (open ? ' is-open' : ''), 'data-open-trail': target},
+    return h('li', {class: `strip ${st.cls}` + (beat ? '' : ' no-pulse') + (open ? ' is-open' : '') + (inRun ? ' in-run' : ''), 'data-open-trail': target},
         h('div', {class: 'c-st'}, statusNode(st)),
         h('div', {class: 'c-name', title: [name, meta].filter(Boolean).join(' · ')},
             h('button', {
@@ -778,25 +778,86 @@ function sessionStrip(s: Session, nowMs: number, view: ViewState, beat: HTMLElem
     return strip;
 }
 
+// An agent held by a usage limit has not finished: it stays in view with the
+// ones at work, and is not folded away with the ended ones.
+const shownFirst = (a: monitor.Agent) => isActive(a) || a.status === 'limited';
+
+// workflowHead leads the agents of one workflow run: what stages it went
+// through, how many of its agents are at work, held or finished, and what
+// they cost together. It folds and unfolds the run's finished agents.
+function workflowHead(run: monitor.Agent[], key: string, open: boolean, view: ViewState): HTMLElement {
+    const working = run.filter(isActive).length;
+    const held = run.filter(a => a.status === 'limited').length;
+    const finished = run.length - working - held;
+    // A workflow's stages are named by its author, after the work: kept off
+    // the screen with the rest of it under "Ẩn nội dung".
+    const phases = view.privacy ? [] : [...new Set(run.map(a => a.phase).filter(Boolean))];
+    const tokens = run.reduce((n, a) => n + a.all.totalTokens, 0);
+    const cost = run.reduce((n, a) => n + a.all.costUsd, 0);
+    const st: StatusView = working > 0 ? {cls: 'is-running', icon: 'dot', label: 'Đang chạy'}
+        : held > 0 ? {cls: 'is-limited', icon: 'bar', label: 'Bị chặn'}
+            : {cls: 'is-done', icon: 'check', label: 'Đã xong'};
+    const counts = [working > 0 && `${working} đang làm`, held > 0 && `${held} bị chặn`, finished > 0 && `${finished} đã kết thúc`]
+        .filter(Boolean).join(' · ');
+    return h('li', {class: `strip wf-head no-pulse ${st.cls}`},
+        h('div', {class: 'c-st'}, statusNode(st)),
+        h('div', {class: 'c-name', title: phases.length > 0 ? `Các giai đoạn: ${phases.join(' → ')}` : undefined},
+            finished > 0
+                ? h('button', {
+                    type: 'button', class: 'agent-name strip-open wf-toggle', 'data-toggle-session': key, 'data-fkey': `fold-${key}`,
+                    'aria-expanded': String(open),
+                    title: open ? 'Thu gọn các agent đã kết thúc của workflow này' : 'Hiện cả các agent đã kết thúc của workflow này',
+                }, `Workflow · ${run.length} agent`)
+                : h('span', {class: 'agent-name'}, `Workflow · ${run.length} agent`),
+            phases.length > 0 && h('span', {class: 'agent-meta'}, phases.join(' → ')),
+        ),
+        h('div', {class: 'c-doing'}, h('div', {class: 'doing'}, h('span', {class: 'doing-text'}, counts))),
+        h('div', {class: 'c-time'}),
+        h('div', {class: 'c-ctx'}),
+        h('div', {class: 'c-spent'}, num('Đã tiêu', f.tokens(tokens), `${f.tokensExact(tokens)} token của mọi agent trong workflow này`)),
+        h('div', {class: 'c-cost'}, num('Chi phí', f.usd(cost))),
+    );
+}
+
 function sessionBlock(s: Session, nowMs: number, view: ViewState): HTMLElement {
     const sessionBeat = s.status === 'busy' ? pulse(s.pulse ?? [], true, nowMs) : null;
-    // An agent held by a usage limit has not finished: it stays in view with
-    // the ones at work, and is not folded away with the ended ones.
-    const shownFirst = (a: monitor.Agent) => isActive(a) || a.status === 'limited';
-    const active = s.agents.filter(shownFirst);
-    const ended = s.agents.filter(a => !shownFirst(a));
+    // Agents a workflow ran are told under their run; the others one by one.
+    const loose = s.agents.filter(a => !a.workflowId);
+    const runs = new Map<string, monitor.Agent[]>();
+    for (const a of s.agents) {
+        if (!a.workflowId) continue;
+        const run = runs.get(a.workflowId);
+        if (run) run.push(a);
+        else runs.set(a.workflowId, [a]);
+    }
+    const active = loose.filter(shownFirst);
+    const ended = loose.filter(a => !shownFirst(a));
     // Under a filter the list is already short: nothing of it is folded away.
-    const open = view.expanded.has(s.id) || view.filter.trim() !== '';
+    const filtering = view.filter.trim() !== '';
+    const open = view.expanded.has(s.id) || filtering;
     const shown = view.hideEnded ? [] : open ? ended : ended.slice(0, ENDED_SHOWN);
 
     const list = h('ul', {class: 'strips'}, sessionStrip(s, nowMs, view, sessionBeat));
     for (const a of active) list.append(agentStrip(a, s.id, nowMs, view));
+    let hiddenInRuns = 0;
+    for (const [id, run] of runs) {
+        const key = `${s.id}|${id}`;
+        const atWork = run.filter(shownFirst);
+        if (view.hideEnded && atWork.length === 0) {
+            hiddenInRuns += run.length;
+            continue;
+        }
+        const openRun = !view.hideEnded && (view.expanded.has(key) || filtering);
+        list.append(workflowHead(run, key, openRun, view));
+        for (const a of openRun ? run : atWork) list.append(agentStrip(a, s.id, nowMs, view, true));
+        if (view.hideEnded) hiddenInRuns += run.length - atWork.length;
+    }
     for (const a of shown) list.append(agentStrip(a, s.id, nowMs, view));
 
     const block = h('article', {class: 'session', 'data-key': `s:${s.id}:${s.pid}`}, list);
 
-    if (view.hideEnded && ended.length > 0) {
-        block.append(h('p', {class: 'fold-note'}, `${ended.length} agent đã kết thúc đang được ẩn.`));
+    if (view.hideEnded && ended.length + hiddenInRuns > 0) {
+        block.append(h('p', {class: 'fold-note'}, `${ended.length + hiddenInRuns} agent đã kết thúc đang được ẩn.`));
     } else if (ended.length > ENDED_SHOWN) {
         block.append(h('button', {
             type: 'button', class: 'fold', 'data-toggle-session': s.id, 'data-fkey': `fold-${s.id}`,

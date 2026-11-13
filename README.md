@@ -27,6 +27,7 @@ Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và t
 Bên dưới là bảng theo dõi:
 
 - **Mỗi project** liệt kê các session của nó, project đang có hoạt động đứng trước. Dòng đầu mỗi khối là session (luồng chính), các dòng dưới là subagent, cùng chung một bộ cột. Dòng tiêu đề cột dính ở đầu khi cuộn.
+- **Agent của một workflow** được gom dưới một dòng **Workflow · N agent**. Dòng này ghi các giai đoạn workflow đã qua, số agent đang làm, bị chặn, đã kết thúc, cùng tổng token và chi phí của cả nhóm. Agent đã kết thúc của workflow được thu gọn; bấm vào dòng Workflow để mở hoặc gọn lại. Báo cáo cuối mà agent của workflow trả về dưới dạng có cấu trúc được trình bày theo từng trường, "tên: giá trị".
 - **Session đã đóng hôm nay** nằm cuối khối của project, mỗi session một dòng với tiêu đề và chi phí. Bấm vào dòng đó để xem các bước cuối của session, và từ đó [mở lại nó](#mở-session-và-chat-trong-app) nếu muốn làm tiếp. Project không còn session nào chạy nhưng có làm việc trong hôm nay vẫn giữ chỗ trên trang cho tới hết ngày.
 - **Ô lọc** ở thanh trên cùng (phím tắt `/`) chỉ để lại những project, session và agent có tên chứa chữ bạn gõ; không phân biệt chữ hoa hay thường, có dấu hay không dấu. Esc xoá chữ đã gõ. Các con số tổng không đổi theo ô lọc.
 - **Cột nhịp 30 phút** vẽ số sự kiện mỗi phút trên cùng một trục thời gian cho mọi dòng, nên so được agent nào dừng lúc nào.

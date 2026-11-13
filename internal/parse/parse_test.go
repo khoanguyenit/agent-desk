@@ -465,8 +465,8 @@ func TestTurnEnd(t *testing.T) {
 	}{
 		{"handback tool", assistant("b", "claude-opus-5-5", "2026-11-11T08:01:00Z", handback, usageJSON(1, 1, 0, 0)),
 			"result", "Verdict Ship it after fixing ctx handling. - one - two"},
-		{"structured output tool of older versions", assistant("b", "claude-opus-5-5", "2026-11-11T08:01:00Z", structured, usageJSON(1, 1, 0, 0)),
-			"result", ""},
+		{"structured output tool", assistant("b", "claude-opus-5-5", "2026-11-11T08:01:00Z", structured, usageJSON(1, 1, 0, 0)),
+			"result", "findings: 1 (và 1 mục nữa) ok: true"},
 		{"plain end of turn", endTurn, "text", "All clear."},
 	}
 	for _, c := range cases {
@@ -654,7 +654,7 @@ func TestUsageLimitIsKeptUntilTheModelAnswersAgain(t *testing.T) {
 	}
 
 	// The limit is reset, and the model answers again.
-	appendLines(t, path, assistant("msg_3", "claude-fable-5-2", "2026-11-12T17:10:00.000Z", textBlock, usageJSON(1, 1, 0, 0)))
+	appendFile(t, path, lines(assistant("msg_3", "claude-fable-5-2", "2026-11-12T17:10:00.000Z", textBlock, usageJSON(1, 1, 0, 0))))
 	mustUpdate(t, f)
 	if f.Limit != nil {
 		t.Fatalf("limit still set after a real response: %+v", f.Limit)
@@ -683,14 +683,23 @@ func TestSessionOwnerIgnoresOddAccountIDs(t *testing.T) {
 	}
 }
 
-func appendLines(t *testing.T, path string, l ...string) {
-	t.Helper()
-	fh, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
+
+// A workflow's agent returns its result in a shape its workflow chooses. The
+// board lays it out field by field instead of showing nothing.
+func TestReportOfAStructuredResult(t *testing.T) {
+	cases := []struct {
+		input, want string
+	}{
+		{`{"summary":"All good."}`, "All good."},
+		{`{"file":"map-1.md","written":true,"digest":["Discovery reads three things","Parser acts on five types"],"seeds":[]}`,
+			"file: map-1.md\nwritten: true\ndigest: Discovery reads three things (và 1 mục nữa)\nseeds: (trống)"},
+		{`{"verdict":{"refuted":false},"claims":[{"id":"B1"},{"id":"B2"}],"count":2}`, "verdict: {…}\nclaims: 2 mục\ncount: 2"},
+		{`{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9}`, "a: 1\nb: 2\nc: 3\nd: 4\ne: 5\nf: 6\ng: 7\nh: 8\n…"},
+		{`["not","an","object"]`, ""},
 	}
-	defer fh.Close()
-	if _, err := fh.WriteString(lines(l...)); err != nil {
-		t.Fatal(err)
+	for _, c := range cases {
+		if got := report([]byte(c.input)); got != c.want {
+			t.Errorf("report(%s) =\n%q\nwant\n%q", c.input, got, c.want)
+		}
 	}
 }

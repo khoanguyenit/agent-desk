@@ -1134,6 +1134,25 @@ button {
     color: var(--ink-3);
 }
 
+/* A workflow run: its head names it and counts its agents, which sit under it
+   a step in. The head opens and closes the run's finished agents. */
+.strip.wf-head .agent-name {
+    font-weight: 600;
+}
+
+.strip.wf-head .wf-toggle::after {
+    content: " ▸";
+    color: var(--ink-3);
+}
+
+.strip.wf-head .wf-toggle[aria-expanded="true"]::after {
+    content: " ▾";
+}
+
+.strip.in-run .c-name {
+    padding-left: 16px;
+}
+
 /* ---- empty and loading states ----------------------------------------------- */
 
 .blank {
