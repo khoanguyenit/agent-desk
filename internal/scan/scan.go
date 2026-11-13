@@ -4,6 +4,7 @@
 package scan
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -49,6 +50,9 @@ type Session struct {
 	WaitingFor string
 	StartedAt  time.Time
 	UpdatedAt  time.Time
+	// StatusSince is when Status last changed: for a waiting session, when
+	// it began to wait. Zero when the entry does not say.
+	StatusSince time.Time
 
 	procStart string
 }
@@ -93,6 +97,9 @@ type registryEntry struct {
 	ProcStart  flexString `json:"procStart"`
 	StartedAt  int64      `json:"startedAt"`
 	UpdatedAt  int64      `json:"updatedAt"`
+	// StatusUpdatedAt is when the status was last written. Entries without
+	// it move UpdatedAt along with the status instead.
+	StatusUpdatedAt int64 `json:"statusUpdatedAt"`
 }
 
 func msToTime(ms int64) time.Time {
@@ -118,18 +125,19 @@ func readEntry(path string) (Session, bool) {
 		return Session{}, false
 	}
 	return Session{
-		PID:        r.PID,
-		SessionID:  r.SessionID,
-		Cwd:        r.Cwd,
-		Name:       r.Name,
-		Status:     r.Status,
-		Kind:       r.Kind,
-		Entrypoint: r.Entrypoint,
-		Version:    r.Version,
-		WaitingFor: r.WaitingFor,
-		StartedAt:  msToTime(r.StartedAt),
-		UpdatedAt:  msToTime(r.UpdatedAt),
-		procStart:  string(r.ProcStart),
+		PID:         r.PID,
+		SessionID:   r.SessionID,
+		Cwd:         r.Cwd,
+		Name:        r.Name,
+		Status:      r.Status,
+		Kind:        r.Kind,
+		Entrypoint:  r.Entrypoint,
+		Version:     r.Version,
+		WaitingFor:  r.WaitingFor,
+		StartedAt:   msToTime(r.StartedAt),
+		UpdatedAt:   msToTime(r.UpdatedAt),
+		StatusSince: msToTime(cmp.Or(r.StatusUpdatedAt, r.UpdatedAt)),
+		procStart:   string(r.ProcStart),
 	}, true
 }
 

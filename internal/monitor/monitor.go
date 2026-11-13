@@ -161,7 +161,10 @@ type Session struct {
 	Status string `json:"status"`
 	// WaitingFor is what a waiting session says it waits for, in Claude
 	// Code's own words; empty for any other status.
-	WaitingFor    string   `json:"waitingFor"`
+	WaitingFor string `json:"waitingFor"`
+	// StatusSinceMs is when the status last changed, as the registry says:
+	// for a waiting session, when it began to wait. Zero when unknown.
+	StatusSinceMs int64    `json:"statusSinceMs"`
 	Entrypoint    string   `json:"entrypoint"`
 	Version       string   `json:"version"`
 	GitBranch     string   `json:"gitBranch"`
@@ -1061,6 +1064,7 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 		Entrypoint:      clean.Text(rs.Entrypoint, labelRunes),
 		Version:         clean.Text(rs.Version, labelRunes),
 		StartedAtMs:     ms(rs.StartedAt),
+		StatusSinceMs:   ms(rs.StatusSince),
 		Agents:          []Agent{},
 		Pulse:           []int{},
 		RecordedCostUSD: -1,

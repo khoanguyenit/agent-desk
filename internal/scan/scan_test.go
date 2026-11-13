@@ -77,8 +77,26 @@ func TestLiveSessionsKeepsOnlyRunningProcesses(t *testing.T) {
 	if seen[100] != "111" || seen[400] != "98765" {
 		t.Fatalf("start markers passed to the liveness check = %v", seen)
 	}
+	// When its status last changed: updatedAt here, which entries without
+	// statusUpdatedAt move along with the status; nothing when neither is set.
+	if got[1].StatusSince.UnixMilli() != 2500 || !first.StatusSince.IsZero() {
+		t.Fatalf("status since = %v, %v", got[1].StatusSince, first.StatusSince)
+	}
 	if _, checked := seen[600]; checked {
 		t.Fatal("an entry without a session id reached the liveness check")
+	}
+}
+
+func TestStatusSincePrefersStatusUpdatedAt(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "sessions", "100.json"),
+		`{"pid":100,"sessionId":"aaa","cwd":"d:\\a","procStart":"111","status":"waiting","updatedAt":9000,"statusUpdatedAt":7000}`)
+	got, err := LiveSessions(dir, func(int, string) bool { return true })
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if got[0].StatusSince.UnixMilli() != 7000 {
+		t.Fatalf("status since = %v, want the time the status was written", got[0].StatusSince)
 	}
 }
 

@@ -43,7 +43,7 @@ Ba công tắc ở góc trên:
 | **Ẩn agent đã kết thúc** | Chỉ để lại agent chưa xong: đang chạy, chờ lệnh hoặc im lặng. |
 | **Ẩn nội dung** | Dùng khi chia sẻ màn hình. Giấu câu lệnh, yêu cầu và kết quả, cùng những gì gọi tên công việc: tiêu đề session, mô tả agent, tên nhánh, tên giai đoạn của workflow. Bảng khi đó gọi session bằng 8 ký tự đầu của mã session, gọi agent bằng loại agent. Tên project, số liệu và tên tool vẫn hiện. Thông báo cũng bỏ tên session và tên agent. |
 
-Trạng thái của session (dòng đầu mỗi khối) do Claude Code tự ghi: **Đang chạy** khi một lượt đang diễn ra, **Rảnh** khi lượt đã xong, **Chờ bạn trả lời** khi session dừng giữa lượt để hỏi bạn hoặc chờ bạn duyệt. Session do app mở mà đang xin phép thì ghi **Chờ bạn cho phép**, vì câu trả lời nằm ngay trong app. Số session đang chờ bạn hiện riêng trong dòng chữ lớn ở đầu trang. Session hay agent mà lần gọi gần nhất bị từ chối vì giới hạn sử dụng thì ghi **Bị chặn tới HH:MM**; xem [Giới hạn sử dụng](#giới-hạn-sử-dụng).
+Trạng thái của session (dòng đầu mỗi khối) do Claude Code tự ghi: **Đang chạy** khi một lượt đang diễn ra, **Rảnh** khi lượt đã xong, **Chờ bạn** khi session dừng giữa lượt để hỏi bạn hoặc chờ bạn duyệt. Nhãn chờ kèm số phút đã chờ, tính từ lúc Claude Code ghi trạng thái đó. Nếu session đang hỏi bạn bằng một câu hỏi (AskUserQuestion), cột hoạt động ghi **Hỏi bạn** kèm câu hỏi, để bạn biết có cần sang ngay không. Session do app mở mà đang xin phép thì ghi **Chờ bạn cho phép**, vì câu trả lời nằm ngay trong app. Số session đang chờ bạn hiện riêng trong dòng chữ lớn ở đầu trang, kèm thời gian của session chờ lâu nhất. Session hay agent mà lần gọi gần nhất bị từ chối vì giới hạn sử dụng thì ghi **Bị chặn tới HH:MM**; xem [Giới hạn sử dụng](#giới-hạn-sử-dụng).
 
 Trạng thái của agent:
 
@@ -85,7 +85,7 @@ Khi **Báo khi xong** đang bật, app báo mỗi việc theo ba đường cùng
 Những việc được báo:
 
 - session xong lượt;
-- session dừng lại chờ bạn trả lời hoặc duyệt;
+- session dừng lại chờ bạn trả lời hoặc duyệt (kèm câu hỏi, nếu session hỏi bằng AskUserQuestion), và nhắc thêm một lần nếu sau 10 phút vẫn chưa ai trả lời;
 - agent làm xong trong lúc session còn chạy;
 - agent đang làm thì im lặng quá lâu và bị coi là đã dừng;
 - agent chờ một lệnh quá 30 phút;
@@ -208,7 +208,7 @@ App đọc những file sau trong thư mục cấu hình của Claude Code (`~/.
 
 | Đường dẫn | Dùng để |
 |---|---|
-| `sessions/<pid>.json` | Biết session nào đang chạy, ở thư mục nào. Mục của process đã thoát bị bỏ qua. |
+| `sessions/<pid>.json` | Biết session nào đang chạy, ở thư mục nào, trạng thái gì và đổi trạng thái từ lúc nào. Mục của process đã thoát bị bỏ qua. |
 | `projects/<project>/<session>.jsonl` | Transcript luồng chính: tiêu đề, yêu cầu gần nhất, token từng lần gọi, lần bị từ chối vì giới hạn sử dụng, và mã tài khoản (chỉ để biết session nào chung một giới hạn; không hiện, không lưu). |
 | `projects/<project>/<session>/subagents/**/agent-*.jsonl` và `.meta.json` | Transcript và mô tả của từng subagent, kể cả agent do workflow sinh ra. |
 

@@ -146,6 +146,11 @@ export function lead(snap: monitor.Snapshot): HTMLElement {
     const held = (s: monitor.Session) => s.status === 'waiting' && !(s as Session).awaitingUser && !(s as Session).duplicate;
     const ownAsking = snap.projects.reduce((n, p) => n + p.sessions.filter(own).length, 0);
     const asking = ownAsking + snap.projects.reduce((n, p) => n + p.sessions.filter(held).length, 0);
+    // How long the one that has waited longest has waited: the number that
+    // says whether to go now.
+    const since = snap.projects.flatMap(p => p.sessions.filter(held))
+        .map(s => s.statusSinceMs).filter(t => t > 0 && t <= snap.generatedAtMs);
+    const longest = since.length > 0 ? snap.generatedAtMs - Math.min(...since) : 0;
     const busy = Math.max(0, c.busySessions - ownAsking);
     const live = busy > 0 || c.runningAgents > 0;
     let headline: string;
@@ -167,7 +172,8 @@ export function lead(snap: monitor.Snapshot): HTMLElement {
         h('h1', {class: 'headline'},
             live && h('span', {class: 'lamp', 'aria-hidden': 'true'}),
             headline && h('span', null, headline),
-            asking > 0 && h('span', {class: (headline ? 'headline-quiet ' : '') + 'headline-asking'}, icon('pause'), `${asking} session chờ bạn`),
+            asking > 0 && h('span', {class: (headline ? 'headline-quiet ' : '') + 'headline-asking'}, icon('pause'),
+                `${asking} session chờ bạn` + (longest >= 60_000 ? (asking > 1 ? `, lâu nhất ${f.minutes(longest)}` : ` ${f.minutes(longest)}`) : '')),
             c.quietAgents > 0 && h('span', {class: 'headline-quiet'}, icon('pause'), `${c.quietAgents} agent im lặng`),
         ),
         // A usage limit holds work across projects at once, so it is said
@@ -527,12 +533,15 @@ function activityNode(act: monitor.Activity, nowMs: number, privacy: boolean): H
     let body: Child[];
     let full: string;
     switch (act.kind) {
-        case 'tool':
+        case 'tool': {
             // The tool's name says what kind of work it is without revealing
-            // what it was run on.
-            body = [h('span', {class: 'tool'}, act.tool), privacy ? '' : act.detail];
-            full = act.detail && !privacy ? `${act.tool}: ${act.detail}` : act.tool;
+            // what it was run on. A question put to the user is named as one,
+            // and its words are what a waiting session waits on.
+            const name = act.tool === 'AskUserQuestion' ? 'Hỏi bạn' : act.tool;
+            body = [h('span', {class: 'tool'}, name), privacy ? '' : act.detail];
+            full = act.detail && !privacy ? `${name}: ${act.detail}` : name;
             break;
+        }
         case 'result':
             // With the report hidden there is nothing to add to the row's own
             // status, so only the time is shown rather than the same words on
@@ -612,9 +621,11 @@ export function sessionStatus(s: Session, nowMs = Date.now()): StatusView {
     if (s.status === 'waiting') {
         // Claude Code's own word for it ("input needed") goes in the tooltip.
         const where = s.entrypoint.includes('vscode') ? 'trong VS Code' : 'ở nơi session đang mở';
+        const since = s.statusSinceMs > 0 && s.statusSinceMs <= nowMs ? s.statusSinceMs : 0;
         return {
-            cls: 'is-quiet', icon: 'pause', label: 'Chờ bạn trả lời',
-            title: `Claude Code đã dừng lại chờ bạn trả lời hoặc duyệt${s.waitingFor ? ` (${s.waitingFor})` : ''}. Trả lời ${where}.`,
+            cls: 'is-quiet', icon: 'pause', label: since ? `Chờ bạn ${f.minutes(nowMs - since)}` : 'Chờ bạn trả lời',
+            title: `Claude Code đã dừng lại chờ bạn trả lời hoặc duyệt${s.waitingFor ? ` (${s.waitingFor})` : ''}` +
+                `${since ? ` từ ${f.hourMinute(since)}` : ''}. Trả lời ${where}.`,
         };
     }
     if (s.status === 'busy') return {cls: 'is-running', icon: 'dot', label: 'Đang chạy'};

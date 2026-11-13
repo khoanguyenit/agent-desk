@@ -776,6 +776,7 @@ export namespace monitor {
 	    pid: number;
 	    status: string;
 	    waitingFor: string;
+	    statusSinceMs: number;
 	    entrypoint: string;
 	    version: string;
 	    gitBranch: string;
@@ -811,6 +812,7 @@ export namespace monitor {
 	        this.pid = source["pid"];
 	        this.status = source["status"];
 	        this.waitingFor = source["waitingFor"];
+	        this.statusSinceMs = source["statusSinceMs"];
 	        this.entrypoint = source["entrypoint"];
 	        this.version = source["version"];
 	        this.gitBranch = source["gitBranch"];

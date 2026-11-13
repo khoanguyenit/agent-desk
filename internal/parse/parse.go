@@ -725,6 +725,23 @@ func toolDetail(input json.RawMessage) (detail string, isPath bool, note string)
 		}
 		return s, k.isPath, note
 	}
+	// A question put to the user (AskUserQuestion): what is asked is what a
+	// waiting session is waiting on.
+	var questions []struct {
+		Question string `json:"question"`
+	}
+	if json.Unmarshal(fields["questions"], &questions) == nil {
+		for i, q := range questions {
+			s := snippet(q.Question)
+			if s == "" {
+				continue
+			}
+			if more := len(questions) - i - 1; more > 0 {
+				s += " (và " + strconv.Itoa(more) + " câu nữa)"
+			}
+			return s, false, ""
+		}
+	}
 	return "", false, ""
 }
 

@@ -433,6 +433,10 @@ func TestToolDetail(t *testing.T) {
 		{`{"path":"src"}`, "src", true, ""},
 		{`{"url":"https://example.com","prompt":"summarise"}`, "https://example.com", false, ""},
 		{`{"file_path":123,"command":"ls"}`, "ls", false, ""},
+		// What a session that waits for the user asks.
+		{`{"questions":[{"question":"Dùng MySQL hay PostgreSQL?","header":"DB","options":[{"label":"MySQL"}]}]}`, "Dùng MySQL hay PostgreSQL?", false, ""},
+		{`{"questions":[{"question":"Tên nhánh?"},{"question":"Có push không?"},{"question":"Ai review?"}]}`, "Tên nhánh? (và 2 câu nữa)", false, ""},
+		{`{"questions":"not a list"}`, "", false, ""},
 		{`{"unknown":"x"}`, "", false, ""},
 		{`not json`, "", false, ""},
 	}

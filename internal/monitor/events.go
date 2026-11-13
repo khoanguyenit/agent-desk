@@ -28,7 +28,15 @@ const (
 	EventLimited = "limited"
 	// EventLimitLifted: the time a limit named for lifting has come.
 	EventLimitLifted = "limit-lifted"
+	// EventStillWaiting: a session has waited for the user for a while and
+	// nobody has answered. It is said once per wait, when it passes the mark.
+	EventStillWaiting = "still-waiting"
 )
+
+// remindAfter is how long a session waits for the user before it is
+// mentioned a second time. The first mention may have come while the user
+// was looking elsewhere.
+const remindAfter = 10 * time.Minute
 
 // eventZone is the time zone the times in notifications are written in.
 var eventZone = time.Local
@@ -49,6 +57,9 @@ type Event struct {
 	Session string
 	// Status is the session's new status for EventSessionIdle.
 	Status string
+	// Question is what a waiting session asks the user, when it asked with
+	// AskUserQuestion. It is the work's own words, kept out under privacy.
+	Question string
 	// Agents are the descriptions of the agents that finished.
 	Agents []string
 	// StillActive is how many of the session's agents are still working.
@@ -83,10 +94,24 @@ func (e Event) Text(privacy bool) (title, body string) {
 			lines = append(lines, e.Session)
 		}
 		if e.Status == SessionWaiting {
-			lines = append(lines, "Claude Code đang dừng lại chờ bạn trả lời hoặc duyệt.")
+			if !privacy && e.Question != "" {
+				lines = append(lines, "Hỏi: "+e.Question)
+			} else {
+				lines = append(lines, "Claude Code đang dừng lại chờ bạn trả lời hoặc duyệt.")
+			}
 		}
 		if n := len(e.Agents); n > 0 {
 			lines = append(lines, fmt.Sprintf("%d agent vừa xong.", n))
+		}
+	case EventStillWaiting:
+		title = fmt.Sprintf("%s: vẫn chờ bạn sau %d phút", e.Project, int(remindAfter.Minutes()))
+		if !privacy && e.Session != "" {
+			lines = append(lines, e.Session)
+		}
+		if !privacy && e.Question != "" {
+			lines = append(lines, "Hỏi: "+e.Question)
+		} else {
+			lines = append(lines, "Chưa ai trả lời hoặc duyệt yêu cầu của session này.")
 		}
 	case EventAgentsStuck:
 		title = fmt.Sprintf("%s: %d agent có vẻ đã dừng giữa chừng", e.Project, len(e.Agents))
@@ -249,6 +274,9 @@ func Diff(prev, cur Snapshot) []Event {
 			}
 
 			at := Event{Project: p.Name, ProjectPath: p.Path, SessionID: s.ID, Session: title, StillActive: s.ActiveAgents}
+			if s.Status == SessionWaiting && s.Activity.Kind == "tool" && s.Activity.Tool == "AskUserQuestion" {
+				at.Question = s.Activity.Detail
+			}
 			with := func(kind string, agents []string) Event {
 				e := at
 				e.Kind, e.Agents = kind, agents
@@ -266,6 +294,14 @@ func Diff(prev, cur Snapshot) []Event {
 				events = append(events, e)
 			case len(finished) > 0:
 				events = append(events, with(EventAgentsDone, finished))
+			}
+			// Still waiting for the user, the same wait as before, and it
+			// has just passed the mark: say it once more.
+			if s.Status == SessionWaiting && old.Status == SessionWaiting && s.StatusSinceMs > 0 && s.StatusSinceMs == old.StatusSinceMs {
+				mark := s.StatusSinceMs + remindAfter.Milliseconds()
+				if prev.GeneratedAtMs < mark && cur.GeneratedAtMs >= mark {
+					events = append(events, with(EventStillWaiting, nil))
+				}
 			}
 			if len(stuck) > 0 {
 				events = append(events, with(EventAgentsStuck, stuck))
