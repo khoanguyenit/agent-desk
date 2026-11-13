@@ -119,17 +119,35 @@ var rules = []rule{
 	{regexp.MustCompile(`\b([A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Z0-9_]*\s*=\s*)("[^"]*"|'[^']*'|[^\s;&|]+)`), "${1}" + Mask},
 	// JSON members with a telling name and a string value.
 	{regexp.MustCompile(`(?i)("[a-z0-9_-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)[a-z0-9_-]*"\s*:\s*)"[^"]*"`), "${1}\"" + Mask + "\""},
-	// key: value or key=value with a telling key.
-	{regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|(?:auth|access|refresh|session|bearer)[_-]?token)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&|]+)`), "${1}" + Mask},
+	// key: value or key=value with a telling key, also when the key is the end
+	// of a longer name: DB_PASSWORD: x, dbPassword=x, MYSQL_PWD=x,
+	// aws_secret_access_key = x, _authToken=x. A value that starts with "="
+	// is not one: that is Go's := or a comparison, as in password == "".
+	{regexp.MustCompile(`(?i)\b([a-z0-9_-]*?(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|(?:auth|access|refresh|session|bearer)[_-]?token)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&|="'][^\s,;&|]*)`), "${1}" + Mask},
 	{regexp.MustCompile(`(?i)\b(token=)[^\s&"',;|]{8,}`), "${1}" + Mask},
 	// Command-line flags that take a secret as the next argument.
 	{regexp.MustCompile(`(?i)(--?(?:password|passwd|pwd|token|secret|api-?key|access-?key)[ =]+)("[^"]*"|'[^']*'|[^\s;&|]+)`), "${1}" + Mask},
 	// mysql -pSECRET and friends.
 	{regexp.MustCompile(`(?i)\b((?:mysql|mysqldump|mysqladmin|mariadb|sshpass)\b[^|;&\n]*?\s-p)\s?[^\s;&|]+`), "${1}" + Mask},
+	// Tools whose password flag is a single letter of their own: sqlcmd and
+	// bcp take -P (capital: -p is something else there), redis-cli takes -a,
+	// a registry login takes -p, curl takes user:password after -u.
+	{regexp.MustCompile(`\b((?i:sqlcmd|bcp|osql)\b[^|;&\n]*?\s-P\s*)("[^"]*"|'[^']*'|[^\s;&|]+)`), "${1}" + Mask},
+	{regexp.MustCompile(`(?i)\b(redis-cli\b[^|;&\n]*?\s(?:-a|--pass)\s+)("[^"]*"|'[^']*'|[^\s;&|]+)`), "${1}" + Mask},
+	{regexp.MustCompile(`(?i)\b((?:docker|podman|nerdctl|helm\s+registry)\s+login\b[^|;&\n]*?\s-p\s*)("[^"]*"|'[^']*'|[^\s;&|]+)`), "${1}" + Mask},
+	{regexp.MustCompile(`(?i)\b(curl\b[^|;&\n]*?\s(?:-u|--user)[ =]?\s*["']?[^\s:"']*:)[^\s"']+`), "${1}" + Mask},
+	// A Go MySQL DSN, which has no scheme: user:password@tcp(host)/db.
+	{regexp.MustCompile(`\b([A-Za-z0-9_.-]+:)[^\s:@/"']+(@(?:tcp|unix)\()`), "${1}" + Mask + "${2}"},
+	// Cookies, which carry the session itself.
+	{regexp.MustCompile(`(?i)\b((?:set-)?cookie\s*:\s*)[^\r\n"']+`), "${1}" + Mask},
 	// Tokens with a recognisable shape.
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), Mask},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`), Mask},
+	{regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}`), Mask},
+	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), Mask},
 	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})`), Mask},
+	{regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}`), Mask},
+	{regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36}\b`), Mask},
 	{regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`), Mask},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}`), Mask},
 }
