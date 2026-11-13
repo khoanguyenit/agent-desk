@@ -277,6 +277,7 @@ frontend/         giao diện (TypeScript thuần, không framework); khung chat
                   trang lịch sử ở src/history.ts, Markdown ở src/markdown.ts
 cmd/dump          công cụ dòng lệnh để kiểm tra số liệu
 cmd/agentprobe    công cụ dòng lệnh để thử giao thức với Claude Code
+tools/demo        bộ quay clip và ảnh cho trang giới thiệu (module Go riêng, không vào bản build)
 ```
 
 Các package trong `internal/` không phụ thuộc Wails và có test riêng.
