@@ -13,7 +13,7 @@
   "info": {
     "companyName": "Khoa Nguyen",
     "productName": "Agent Desk",
-    "productVersion": "0.2.0",
+    "productVersion": "0.3.0",
     "copyright": "Copyright © 2026 Khoa Nguyen. https://khoabug.com/",
     "comments": "Shows the Claude Code sessions and subagents running on this machine, with their token use and cost, and runs sessions of its own."
   }
