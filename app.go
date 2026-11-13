@@ -991,6 +991,27 @@ func (a *App) GetTrail(sessionID, agentID string) TrailResult {
 	return TrailResult{Trail: tr}
 }
 
+// SummaryResult is what a session did, added up, or why it could not be.
+type SummaryResult struct {
+	Summary monitor.Summary `json:"summary"`
+	Problem string          `json:"problem"`
+}
+
+// GetSummary adds up a session's whole work, from its transcript and its
+// subagents'. Like GetTrail it is read-only and reaches only sessions on the
+// board. With "Ẩn nội dung" on, the names of the files it changed are left
+// out and only their number remains.
+func (a *App) GetSummary(sessionID string) SummaryResult {
+	a.mu.Lock()
+	hide := a.privacy
+	a.mu.Unlock()
+	sum, err := a.svc.Summary(sessionID, hide)
+	if err != nil {
+		return SummaryResult{Summary: sum, Problem: err.Error()}
+	}
+	return SummaryResult{Summary: sum}
+}
+
 // chatChanged is called by the agent manager, from its own goroutines, every
 // time a session changes. It tells the page, at a bounded rate, and raises a
 // notification when a session starts waiting for permission.

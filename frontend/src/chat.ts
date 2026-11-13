@@ -1,11 +1,12 @@
 import {
-    AnswerPermission, EndSession, ForgetSession, GetChat, GetClaude, GetModels, GetTrail, InterruptSession, ListChats,
+    AnswerPermission, EndSession, ForgetSession, GetChat, GetClaude, GetModels, GetSummary, GetTrail, InterruptSession, ListChats,
     ResumeSession, SendChat, StartSession, TrustResume,
 } from '../wailsjs/go/main/App';
 import {agent, monitor} from '../wailsjs/go/models';
 import {EventsOn} from '../wailsjs/runtime/runtime';
 import * as f from './format';
 import {markdown} from './markdown';
+import {summaryBody, summaryLine} from './summary';
 import {agentStatus, h, OpenMark, sessionStatus, statusNode, StatusView} from './render';
 
 // The side panel. It shows one of three things:
@@ -62,6 +63,15 @@ let draft: Draft | null = null;
 let target: TrailTarget | null = null;
 let trail: monitor.Trail | null = null;
 let trailProblem = '';
+// The summary of the session the panel shows: its whole work added up. It
+// reads every transcript of the session, so it is asked for when the panel
+// turns to a session and then at most every SUMMARY_MS, not on every refresh.
+const SUMMARY_MS = 30_000;
+let summary: monitor.Summary | null = null;
+let summaryId = '';
+let summaryAt = 0;
+let summaryProblem = '';
+let summaryStamp = '';
 let view: agent.View | null = null;
 let items = new Map<number, agent.Item>();
 let rev = 0;
@@ -100,6 +110,10 @@ const picker = h('select', {class: 'chat-pick', 'aria-label': 'Chuyển sang ses
 const stopBtn = h('button', {type: 'button', class: 'chat-btn', title: 'Dừng lượt đang chạy. Session vẫn mở để bạn hỏi tiếp.'}, 'Dừng lượt này');
 const endBtn = h('button', {type: 'button', class: 'chat-btn chat-btn-quiet', title: 'Đóng session này và mọi thứ nó đang chạy'}, 'Kết thúc session');
 const closeBtn = h('button', {type: 'button', class: 'chat-btn chat-close', 'aria-label': 'Đóng khung bên'}, 'Đóng');
+
+const summaryHead = h('summary', {class: 'chat-summary-head'});
+const summaryInner = h('div', {class: 'chat-summary-body'});
+const summaryBox = h('details', {class: 'chat-summary', hidden: true}, summaryHead, summaryInner);
 
 const itemsBox = h('div', {class: 'chat-items'});
 const activityEl = h('p', {class: 'chat-activity', 'aria-hidden': 'true'});
@@ -148,6 +162,7 @@ const drawer = h('aside', {class: 'chat', 'aria-label': 'Khung làm việc với
         h('div', {class: 'chat-actions'}, picker, stopBtn, endBtn),
         closeBtn,
     ),
+    summaryBox,
     log,
     pendingBox,
     problemEl,
@@ -698,6 +713,7 @@ function draw(): void {
     }
     drawActivity();
     drawPending();
+    drawSummary();
     if (nearBottom) log.scrollTop = log.scrollHeight;
 }
 
@@ -785,6 +801,56 @@ async function pull(): Promise<void> {
     }
 }
 
+// summaryTarget is the session whose summary the panel shows: the main thread
+// of a session whose steps are open, or a session of the app's own.
+function summaryTarget(): string {
+    if (showing === 'trail' && target && target.agentId === '') return target.sessionId;
+    if (showing === 'chat' && currentId) return currentId;
+    return '';
+}
+
+async function pullSummary(force = false): Promise<void> {
+    const id = summaryTarget();
+    if (!id || (!force && id === summaryId && Date.now() - summaryAt < SUMMARY_MS)) return;
+    // Marked before the answer comes, so the next refresh does not ask too.
+    summaryId = id;
+    summaryAt = Date.now();
+    const asked = gen;
+    try {
+        const res = await GetSummary(id);
+        if (asked !== gen) return;
+        summaryProblem = res.problem;
+        if (!res.problem || !summary) summary = res.problem ? null : res.summary;
+    } catch (err) {
+        if (asked !== gen) return;
+        summaryProblem = err instanceof Error ? err.message : String(err);
+    }
+    drawSummary();
+}
+
+function drawSummary(): void {
+    const id = summaryTarget();
+    if (!id || id !== summaryId || (!summary && !summaryProblem)) {
+        summaryBox.hidden = true;
+        return;
+    }
+    summaryBox.hidden = false;
+    const agents = sessionOnBoard(id)?.session.agents ?? null;
+    // Redrawn only when what it says changes; the agents' cost moves on
+    // every refresh, so it is taken to the cent.
+    const stamp = JSON.stringify([summary, summaryProblem, (agents ?? []).map(a => [a.type, Math.round(a.all.costUsd * 100)])]);
+    if (stamp === summaryStamp) return;
+    summaryStamp = stamp;
+    summaryHead.replaceChildren(
+        h('span', {class: 'chat-summary-title'}, 'Tổng kết session'),
+        h('span', {class: 'chat-summary-line'}, summary ? summaryLine(summary) : ''),
+    );
+    summaryInner.replaceChildren(
+        ...(summary ? summaryBody(summary, agents) : []),
+        summaryProblem ? h('p', {class: 'sum-note'}, summaryProblem) : '',
+    );
+}
+
 async function pullTrail(): Promise<void> {
     if (showing !== 'trail' || !target) return;
     const asked = gen;
@@ -850,6 +916,12 @@ function turn(to: Showing): void {
     toggled.clear();
     answering.clear();
     trailKeys = new Map();
+    summary = null;
+    summaryId = '';
+    summaryAt = 0;
+    summaryProblem = '';
+    summaryStamp = '';
+    summaryBox.hidden = true;
     itemsBox.replaceChildren();
     pendingBox.replaceChildren();
     pickerShape = '';
@@ -861,6 +933,7 @@ function show(id: string): void {
     giveBack();
     draw();
     void pull();
+    void pullSummary(true);
     void drawPicker();
     onChange();
 }
@@ -1123,6 +1196,7 @@ export function openTrail(sessionId: string, agentId: string): void {
     target = {sessionId, agentId};
     draw();
     void pullTrail();
+    void pullSummary(true);
     void drawPicker();
     onChange();
 }
@@ -1132,12 +1206,14 @@ export function openTrail(sessionId: string, agentId: string): void {
 export function setPrivacy(on: boolean): void {
     if (privacy === on) return;
     privacy = on;
+    void pullSummary(true);
     if (showing === 'trail') draw();
 }
 
 export function sync(snap: monitor.Snapshot): void {
     board = snap;
     if (showing === 'none') return;
+    void pullSummary();
     if (showing === 'trail') {
         void pullTrail();
         return;

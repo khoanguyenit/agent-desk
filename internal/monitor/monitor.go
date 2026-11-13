@@ -369,8 +369,9 @@ type Service struct {
 	lists  map[string]*agentList
 	// closed is the sessions listed as closed in the latest snapshot, by id.
 	// Only those can be looked into after they have ended.
-	closed map[string]closedRef
-	trail  trailCache
+	closed  map[string]closedRef
+	trail   trailCache
+	summary summaryCache
 	// priced has a lock of its own: a report on the history needs the price
 	// table and must not wait for a scan of the disk to finish.
 	pricedMu sync.Mutex

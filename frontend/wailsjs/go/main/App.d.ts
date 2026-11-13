@@ -26,6 +26,8 @@ export function GetNotices():Promise<Array<main.Notice>>;
 
 export function GetSnapshot():Promise<monitor.Snapshot>;
 
+export function GetSummary(arg1:string):Promise<main.SummaryResult>;
+
 export function GetTrail(arg1:string,arg2:string):Promise<main.TrailResult>;
 
 export function InterruptSession(arg1:string):Promise<string>;

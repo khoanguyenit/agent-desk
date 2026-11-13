@@ -46,6 +46,10 @@ export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }
 
+export function GetSummary(arg1) {
+  return window['go']['main']['App']['GetSummary'](arg1);
+}
+
 export function GetTrail(arg1, arg2) {
   return window['go']['main']['App']['GetTrail'](arg1, arg2);
 }

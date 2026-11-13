@@ -32,6 +32,13 @@ Bên dưới là bảng theo dõi:
 - **Ô lọc** ở thanh trên cùng (phím tắt `/`) chỉ để lại những project, session và agent có tên chứa chữ bạn gõ; không phân biệt chữ hoa hay thường, có dấu hay không dấu. Esc xoá chữ đã gõ. Các con số tổng không đổi theo ô lọc.
 - **Cột nhịp 30 phút** vẽ số sự kiện mỗi phút trên cùng một trục thời gian cho mọi dòng, nên so được agent nào dừng lúc nào.
 - **Bấm vào một dòng** (luồng chính của session hoặc một subagent) để mở khung bên phải với các bước gần đây của agent đó: nhiệm vụ được giao, từng lần gọi tool kèm kết quả, những đoạn nó viết, báo cáo cuối. Khung tự cập nhật theo transcript và chỉ để xem. Với lệnh shell, cả bảng lẫn khung đều hiện câu lệnh thật; câu agent tự mô tả lệnh đó chỉ hiện trong khung, đặt riêng và ghi rõ là lời của agent, như trên thẻ xin phép. Ở đây câu chữ dài được cắt bớt, chuỗi trông như mật khẩu được che, và công tắc **Ẩn nội dung** giấu hết phần chữ, chỉ để lại tên tool. Bấm lại dòng đó để đóng.
+- **Tổng kết session:** khi khung bên phải mở một session (luồng chính, session đã đóng hôm nay, hay session do app mở), đầu khung có dòng **Tổng kết session**: số câu bạn gõ, số lần gọi tool, số file đã sửa, số dòng thêm và bớt, số commit và push. Bấm vào để mở bốn nhóm:
+  - **Đã làm:** thời gian, câu bạn gõ, các tool hay dùng, thời gian chạy tool, số agent và workflow.
+  - **Thay đổi:** các file đã sửa, số dòng thêm và bớt, lệnh `git commit` và `git push` đã chạy không lỗi.
+  - **Ai cho phép:** mỗi lần gọi tool do ai cho chạy (bạn, classifier của chế độ auto, chế độ quyền, luật allow, hook), lần nào bị từ chối, session chạy ở chế độ quyền nào.
+  - **Vì sao tốn:** số lượt gọi model, phần token dùng để suy nghĩ, mức effort, số lần compact, số lần cache miss và lượng token phải gửi lại, chi phí theo loại agent.
+
+  Thẻ đọc trọn transcript của session và các agent của nó, nên chỉ tính khi khung mở và tính lại tối đa mỗi 30 giây. Nó chỉ đếm, không giữ câu chữ nào; khi bật **Ẩn nội dung**, tên file được bỏ đi, chỉ còn số lượng.
 - **Bấm vào tên project** để chuyển sang cửa sổ VS Code đang mở project đó. Lần đầu VS Code có thể hỏi xác nhận việc mở thư mục từ ứng dụng ngoài.
 
 Nếu Windows đang bật "giảm chuyển động" thì hoạt cảnh đứng yên.
@@ -214,6 +221,8 @@ App đọc những file sau trong thư mục cấu hình của Claude Code (`~/.
 | `projects/<project>/<session>/subagents/**/agent-*.jsonl` và `.meta.json` | Transcript và mô tả của từng subagent, kể cả agent do workflow sinh ra. |
 
 Để dựng lịch sử, app còn đọc transcript của những session đã đóng từ các ngày trước, cũng trong `projects/`, mỗi file một lần cho tới khi file đó thay đổi. Từ những file ấy app chỉ lấy số token, ngày, model và thư mục.
+
+Thẻ **Tổng kết session** đọc trọn transcript của một session và các agent của nó khi bạn mở session đó trong khung bên phải. Từ đó app chỉ lấy số đếm (lần gọi tool, dòng thêm bớt, ai cho phép, token…) và đường dẫn của các file đã sửa; những thứ này nằm trong bộ nhớ, không ghi ra đĩa.
 
 Định dạng các file này là nội bộ của Claude Code và có thể đổi theo phiên bản (app được viết và kiểm với bản 2.1.322). Parser bỏ qua thứ nó không hiểu thay vì báo lỗi, và trang sẽ cảnh báo nếu có lượt gọi không cộng được. Nếu số liệu bỗng thiếu sau khi nâng Claude Code, chỗ cần xem là [internal/parse](internal/parse/parse.go).
 

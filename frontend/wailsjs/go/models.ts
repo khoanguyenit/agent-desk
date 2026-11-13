@@ -310,6 +310,38 @@ export namespace main {
 	        this.problem = source["problem"];
 	    }
 	}
+	export class SummaryResult {
+	    summary: monitor.Summary;
+	    problem: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SummaryResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.summary = this.convertValues(source["summary"], monitor.Summary);
+	        this.problem = source["problem"];
+	    }
+	
+	convertValues(a: any, classs: any, asMap: boolean = false): any {
+	    if (!a) {
+	        return a;
+	    }
+	    if (a.slice && a.map) {
+	        return (a as any[]).map(elem => this.convertValues(elem, classs));
+	    } else if ("object" === typeof a) {
+	        if (asMap) {
+	            for (const key of Object.keys(a)) {
+	                a[key] = new classs(a[key]);
+	            }
+	            return a;
+	        }
+	        return new classs(a);
+	    }
+	    return a;
+	}
+}
 	export class TrailResult {
 	    trail: monitor.Trail;
 	    problem: string;
@@ -975,6 +1007,106 @@ export namespace monitor {
 		}
 	}
 	
+	export class Count {
+	    name: string;
+	    n: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Count(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.n = source["n"];
+	    }
+	}
+	export class Summary {
+	    sessionId: string;
+	    prompts: number;
+	    toolCalls: number;
+	    tools: Count[];
+	    agents: number;
+	    workflows: number;
+	    filesChanged: number;
+	    files: Count[];
+	    linesAdded: number;
+	    linesRemoved: number;
+	    commits: number;
+	    pushes: number;
+	    firstAtMs: number;
+	    lastAtMs: number;
+	    toolMs: number;
+	    allowed: Count[];
+	    denied: Count[];
+	    modes: Count[];
+	    compactions: number;
+	    compactedFrom: number;
+	    compactedTo: number;
+	    cacheMisses: number;
+	    cacheMissTokens: number;
+	    responses: number;
+	    outputTokens: number;
+	    thinkingTokens: number;
+	    efforts: Count[];
+	    partial: boolean;
+	    hidden: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Summary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.prompts = source["prompts"];
+	        this.toolCalls = source["toolCalls"];
+	        this.tools = this.convertValues(source["tools"], Count);
+	        this.agents = source["agents"];
+	        this.workflows = source["workflows"];
+	        this.filesChanged = source["filesChanged"];
+	        this.files = this.convertValues(source["files"], Count);
+	        this.linesAdded = source["linesAdded"];
+	        this.linesRemoved = source["linesRemoved"];
+	        this.commits = source["commits"];
+	        this.pushes = source["pushes"];
+	        this.firstAtMs = source["firstAtMs"];
+	        this.lastAtMs = source["lastAtMs"];
+	        this.toolMs = source["toolMs"];
+	        this.allowed = this.convertValues(source["allowed"], Count);
+	        this.denied = this.convertValues(source["denied"], Count);
+	        this.modes = this.convertValues(source["modes"], Count);
+	        this.compactions = source["compactions"];
+	        this.compactedFrom = source["compactedFrom"];
+	        this.compactedTo = source["compactedTo"];
+	        this.cacheMisses = source["cacheMisses"];
+	        this.cacheMissTokens = source["cacheMissTokens"];
+	        this.responses = source["responses"];
+	        this.outputTokens = source["outputTokens"];
+	        this.thinkingTokens = source["thinkingTokens"];
+	        this.efforts = this.convertValues(source["efforts"], Count);
+	        this.partial = source["partial"];
+	        this.hidden = source["hidden"];
+	    }
+	
+	convertValues(a: any, classs: any, asMap: boolean = false): any {
+	    if (!a) {
+	        return a;
+	    }
+	    if (a.slice && a.map) {
+	        return (a as any[]).map(elem => this.convertValues(elem, classs));
+	    } else if ("object" === typeof a) {
+	        if (asMap) {
+	            for (const key of Object.keys(a)) {
+	                a[key] = new classs(a[key]);
+	            }
+	            return a;
+	        }
+	        return new classs(a);
+	    }
+	    return a;
+	}
+}
 	export class TrailStep {
 	    kind: string;
 	    tool: string;
