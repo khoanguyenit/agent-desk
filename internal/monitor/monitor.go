@@ -927,7 +927,7 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 		// Before anything else: a session whose last lines were written
 		// just before midnight is not at work today, and is not listed, but
 		// what it consumed yesterday must still reach the history.
-		b.record(e.SessionID, f.Cwd, u.merged)
+		b.record(e.SessionID, homeDir(f), u.merged)
 	}
 	parts := append([]map[parse.Key]usage.Tokens{f.Usage}, u.agents...)
 	atWorkToday := false
@@ -963,7 +963,36 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 		All:        all.spend(),
 		Today:      today.spend(),
 	}
-	return cs, f.Cwd, all, today, true
+	return cs, homeDir(f), all, today, true
+}
+
+// homeDir is the folder a session that has ended belongs to: the one Claude
+// Code filed its transcript under, which is the folder it started in. A
+// session can go on in another one, a subfolder for instance, and its last
+// lines then name that; it still belongs to the project it started in, and
+// can be resumed only from there. Of the two folders its lines name, the one
+// the transcript is filed under wins; when neither is, the first.
+func homeDir(f *parse.File) string {
+	filed := filepath.Base(filepath.Dir(f.Path))
+	for _, dir := range []string{f.Cwd, f.FirstCwd} {
+		if dir != "" && sameSlug(scan.Slug(dir), filed) {
+			return dir
+		}
+	}
+	if f.FirstCwd != "" {
+		return f.FirstCwd
+	}
+	return f.Cwd
+}
+
+// sameSlug reports whether two project folder names are the same. Where
+// capitals do not tell two folders apart they do not tell two spellings of
+// one folder apart either: "d:\x" and "D:\x" are filed under the same folder.
+func sameSlug(a, b string) bool {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (b *build) session(rs scan.Session) (Session, acc, acc) {

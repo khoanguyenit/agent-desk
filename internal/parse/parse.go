@@ -84,10 +84,13 @@ type File struct {
 	Title      string
 	LastPrompt string
 	GitBranch  string
-	// Cwd is the working directory the session ran in, as its lines record
-	// it. It is how a session that has ended is put back under its project.
-	Cwd  string
-	Last Activity
+	// Cwd is the working directory the session was last in, as its lines
+	// record it, and FirstCwd the one it started in. They differ when the
+	// session moved, into a subfolder for instance. Claude Code files the
+	// transcript under the folder the session started in.
+	Cwd      string
+	FirstCwd string
+	Last     Activity
 	// RecordedCostUSD is the last cost Claude Code wrote for the session
 	// itself, when the transcript has one. It is kept for cross-checking.
 	RecordedCostUSD float64
@@ -152,6 +155,7 @@ func (f *File) reset() {
 	f.LastPrompt = ""
 	f.GitBranch = ""
 	f.Cwd = ""
+	f.FirstCwd = ""
 	f.Last = Activity{}
 	f.RecordedCostUSD = 0
 	f.HasRecordedCost = false
@@ -358,8 +362,11 @@ func (f *File) consume(line []byte) {
 		f.GitBranch = clean.Text(rl.GitBranch, labelRunes)
 	}
 	if rl.Cwd != "" {
-		// The latest one: a session can be moved to another folder.
+		// Both ends: a session can move to another folder as it goes.
 		f.Cwd = rl.Cwd
+		if f.FirstCwd == "" {
+			f.FirstCwd = rl.Cwd
+		}
 	}
 	switch rl.Type {
 	case "assistant":

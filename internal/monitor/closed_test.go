@@ -98,6 +98,34 @@ func TestSessionClosedTodayStaysInTheTotals(t *testing.T) {
 	}
 }
 
+// A session that went into a subfolder as it worked still belongs to the
+// project it started in, which is where Claude Code filed its transcript and
+// the only folder it can be resumed from.
+func TestSessionThatMovedIntoASubfolderStaysWithItsProject(t *testing.T) {
+	w := fixture(t)
+	appendTo(t, filepath.Join(w.project, "sid-a.jsonl"),
+		cwdLine("2026-11-12T02:59:30Z", w.cwd)+cwdLine("2026-11-12T02:59:40Z", filepath.Join(w.cwd, "frontend")))
+	w.svc.Snapshot()
+	if err := os.Remove(filepath.Join(w.dir, "sessions", "100.json")); err != nil {
+		t.Fatal(err)
+	}
+	closed := w.svc.Snapshot()
+
+	app := projectNamed(t, closed, "app")
+	if len(app.Closed) != 1 || app.Closed[0].ID != "sid-a" {
+		t.Fatalf("project app has %d closed sessions; the session went elsewhere", len(app.Closed))
+	}
+	for _, p := range closed.Projects {
+		if p.Name == "frontend" {
+			t.Fatalf("the subfolder became a project of its own")
+		}
+	}
+	dir, err := w.svc.Resumable("sid-a")
+	if err != nil || dir != w.cwd {
+		t.Fatalf("Resumable = %q, %v; want the folder it started in, %q", dir, err, w.cwd)
+	}
+}
+
 // A project with nothing running any more stays on the page for the day, so
 // that the projects still add up to the total.
 func TestProjectWhoseOnlySessionClosedIsStillListed(t *testing.T) {

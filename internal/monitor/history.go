@@ -335,7 +335,7 @@ func readSession(path string, agents []scan.AgentFile, loc *time.Location) (rows
 			merged[k] = cur
 		}
 	}
-	return rowsOf(merged), main.Cwd, whole, true
+	return rowsOf(merged), homeDir(main), whole, true
 }
 
 // AwaitBackfill marks the history as being read before the reading has
