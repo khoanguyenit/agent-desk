@@ -796,8 +796,38 @@ async function pullTrail(): Promise<void> {
     }
 }
 
+// Words typed and not sent belong to where they were going: one session, or
+// the draft of a new one in one project. The box is shared, so they are put
+// away when the panel turns elsewhere and given back when it returns; they
+// must never follow the user into another session and be sent there.
+const unsent = new Map<string, string>();
+
+function boxKey(): string {
+    if (showing === 'chat' && currentId) return `chat:${currentId}`;
+    if (showing === 'draft' && draft) return draft.resume ? `resume:${draft.resume.sessionId}` : `new:${draft.projectPath}`;
+    return '';
+}
+
+function putAway(): void {
+    const key = boxKey();
+    if (!key) return;
+    if (input.value.trim() !== '') unsent.set(key, input.value);
+    else unsent.delete(key);
+}
+
+function giveBack(): void {
+    input.value = unsent.get(boxKey()) ?? '';
+}
+
+// forget drops words put away for a box once they have been sent after all.
+function forget(key: string, sent: string): void {
+    if (unsent.get(key)?.trim() === sent) unsent.delete(key);
+}
+
 // turn points the panel at something else and forgets what it held.
 function turn(to: Showing): void {
+    putAway();
+    input.value = '';
     gen++;
     showing = to;
     currentId = '';
@@ -822,6 +852,7 @@ function turn(to: Showing): void {
 function show(id: string): void {
     turn('chat');
     currentId = id;
+    giveBack();
     draw();
     void pull();
     void drawPicker();
@@ -841,22 +872,36 @@ async function submit(): Promise<void> {
     const asked = gen;
     try {
         if (showing === 'draft' && draft) {
+            const box = boxKey();
             const res = draft.resume
                 ? await ResumeSession(draft.resume.sessionId, text, chosenMode(), modelPick.value)
                 : await StartSession(draft.projectPath, text, chosenMode(), modelPick.value);
-            if (asked !== gen) return;
+            if (asked !== gen) {
+                // The panel turned elsewhere while the words were on their
+                // way, and put them away. Once sent they must not be offered
+                // again.
+                if (res.id && !res.problem) forget(box, text);
+                return;
+            }
             if (!res.id) {
                 problem = res.problem || 'Không mở được session.';
                 return;
             }
             // With a problem the session exists but did not get the request:
-            // the words stay in the box to be sent again.
-            if (!res.problem) input.value = '';
+            // the words go with it, to be sent again from its own box. The
+            // draft's box is done with either way.
+            const words = res.problem ? input.value : '';
+            input.value = '';
             show(res.id);
+            if (words) input.value = words;
             problem = res.problem;
         } else if (showing === 'chat' && currentId) {
+            const box = boxKey();
             const err = await SendChat(currentId, text);
-            if (asked !== gen) return;
+            if (asked !== gen) {
+                if (!err) forget(box, text);
+                return;
+            }
             if (err) {
                 problem = err;
                 return;
@@ -1040,6 +1085,7 @@ export function open(id: string): void {
 export function openDraft(projectPath: string, projectName: string, resume?: Draft['resume']): void {
     turn('draft');
     draft = {projectPath, projectName, resume};
+    giveBack();
     // Every new session starts from the mode that asks first; a looser mode
     // is chosen each time, never carried over from the last session. The
     // model, likewise, goes back to Claude Code's own.
