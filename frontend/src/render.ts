@@ -612,10 +612,23 @@ function costNum(sp: monitor.Spend): HTMLElement {
     return el;
 }
 
+// With "Ẩn nội dung" on, what names the work goes along with what was said
+// and run, as in the notifications: a session's title and name, an agent's
+// description, a branch, a workflow phase. The project is still named, so the
+// user knows where to look; a session is told apart by its id, an agent by
+// its type.
+function sessionLabel(id: string): string {
+    return `Session ${id.slice(0, 8)}`;
+}
+
 function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState): HTMLElement {
     const st = agentStatus(a);
-    const meta = [a.type !== a.description ? a.type : '', a.modelLabel, a.phase ? `giai đoạn ${a.phase}` : '']
-        .filter(Boolean).join(' · ');
+    const name = view.privacy ? a.type || 'Agent' : a.description || a.id;
+    const meta = [
+        !view.privacy && a.type !== a.description ? a.type : '',
+        a.modelLabel,
+        !view.privacy && a.phase ? `giai đoạn ${a.phase}` : '',
+    ].filter(Boolean).join(' · ');
     const beat = isActive(a) ? pulse(a.pulse ?? [], a.status === 'running', nowMs) : null;
     // Without a pulse to draw, the activity text takes that column too.
     const target = `${sessionId}|${a.id}`;
@@ -624,11 +637,11 @@ function agentStrip(a: Agent, sessionId: string, nowMs: number, view: ViewState)
     // keyboard reaches.
     return h('li', {class: `strip ${st.cls}` + (beat ? '' : ' no-pulse') + (open ? ' is-open' : ''), 'data-open-trail': target},
         h('div', {class: 'c-st'}, statusNode(st)),
-        h('div', {class: 'c-name', title: [a.description, meta].filter(Boolean).join(' · ')},
+        h('div', {class: 'c-name', title: [name, meta].filter(Boolean).join(' · ')},
             h('button', {
                 type: 'button', class: 'agent-name strip-open', 'data-fkey': `trail-${target}`,
                 'aria-expanded': String(open), title: 'Xem các bước agent này đã làm',
-            }, a.description || a.id),
+            }, name),
             meta && h('span', {class: 'agent-meta'}, meta),
         ),
         h('div', {class: 'c-doing'}, activityNode(a.activity, nowMs, view.privacy)),
@@ -664,11 +677,11 @@ function stripHeader(showPulse: boolean): HTMLElement {
 // agents, so its figures read as the block's totals.
 function sessionStrip(s: Session, nowMs: number, view: ViewState, beat: HTMLElement | null): HTMLElement {
     const st = sessionStatus(s);
-    const title = s.title || s.name || s.id;
+    const title = view.privacy ? sessionLabel(s.id) : s.title || s.name || s.id;
     const meta = [
         s.modelLabel,
-        s.gitBranch && `nhánh ${s.gitBranch}`,
-        s.name && s.name !== title ? s.name : '',
+        !view.privacy && s.gitBranch && `nhánh ${s.gitBranch}`,
+        !view.privacy && s.name && s.name !== title ? s.name : '',
         s.today.costUsd > 0 && `hôm nay ${f.usd(s.today.costUsd)}`,
     ].filter(Boolean).join(' · ');
 
@@ -759,9 +772,10 @@ function closedBlock(closed: monitor.ClosedSession[], nowMs: number, view: ViewS
     for (const c of closed) {
         const target = `${c.id}|`;
         const open = view.open.sessionId === c.id && view.open.agentId === '';
+        const title = view.privacy ? sessionLabel(c.id) : c.title || 'Session chưa có tiêu đề';
         const meta = [
             c.modelLabel,
-            c.gitBranch && `nhánh ${c.gitBranch}`,
+            !view.privacy && c.gitBranch && `nhánh ${c.gitBranch}`,
             c.agents > 0 && `${c.agents} agent`,
             c.today.costUsd > 0 && `hôm nay ${f.usd(c.today.costUsd)}`,
         ].filter(Boolean).join(' · ');
@@ -772,11 +786,11 @@ function closedBlock(closed: monitor.ClosedSession[], nowMs: number, view: ViewS
                 cls: 'is-done', icon: 'square', label: 'Đã đóng',
                 title: 'Session này đã kết thúc. Chi phí của nó vẫn nằm trong tổng của hôm nay.',
             })),
-            h('div', {class: 'c-name', title: c.title},
+            h('div', {class: 'c-name', title},
                 h('button', {
                     type: 'button', class: 'agent-name strip-open', 'data-fkey': `trail-${target}`,
                     'aria-expanded': String(open), title: 'Xem các bước của session này, và mở lại nó nếu muốn',
-                }, c.title || 'Session chưa có tiêu đề'),
+                }, title),
                 meta && h('span', {class: 'agent-meta'}, meta),
             ),
             h('div', {class: 'c-doing'}, h('div', {class: 'doing'},

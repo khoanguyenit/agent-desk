@@ -76,6 +76,9 @@ let sending = false;
 let resuming = false;
 let problem = '';
 let board: monitor.Snapshot | null = null;
+// privacy mirrors the "Ẩn nội dung" switch. It covers what the panel shows of
+// sessions that run elsewhere, never the chat of the app's own.
+let privacy = false;
 let claude: { path: string; problem: string } | null = null;
 let models: monitor.ModelChoice[] = [];
 let modelShape = '';
@@ -571,9 +574,12 @@ function drawHeading(): void {
         const a = found?.session.agents.find(x => x.id === target!.agentId);
         const closed = found ? null : closedOnBoard(target.sessionId);
         projectEl.textContent = found?.project.name ?? closed?.project.name ?? '';
+        // The steps of a session that runs elsewhere follow "Ẩn nội dung", and
+        // so does the heading above them: the board's rule, see render.ts.
+        const label = `Session ${target.sessionId.slice(0, 8)}`;
         if (closed) {
             const c = closed.session;
-            titleEl.textContent = c.title || 'Session chưa có tiêu đề';
+            titleEl.textContent = privacy ? label : c.title || 'Session chưa có tiêu đề';
             metaEl.replaceChildren(
                 statusNode({cls: 'is-done', icon: 'square', label: 'Đã đóng'}),
                 ' · ' + [c.modelLabel, f.usd(c.all.costUsd), f.ago(c.endedAtMs, board?.generatedAtMs ?? Date.now())].filter(Boolean).join(' · '));
@@ -582,12 +588,12 @@ function drawHeading(): void {
             metaEl.replaceChildren('Session này không còn trên bảng.');
         } else if (target.agentId === '') {
             const s = found.session;
-            titleEl.textContent = s.title || s.name || 'Luồng chính';
+            titleEl.textContent = privacy ? label : s.title || s.name || 'Luồng chính';
             metaEl.replaceChildren(statusNode(sessionStatus(s)), [' · luồng chính', s.modelLabel].filter(Boolean).join(' · '));
         } else if (a) {
-            titleEl.textContent = a.description || a.type || 'Agent';
+            titleEl.textContent = privacy ? a.type || 'Agent' : a.description || a.type || 'Agent';
             metaEl.replaceChildren(statusNode(agentStatus(a)),
-                ' · ' + [a.type !== a.description ? a.type : '', a.modelLabel, `${a.toolUses} lần gọi tool`].filter(Boolean).join(' · '));
+                ' · ' + [!privacy && a.type !== a.description ? a.type : '', a.modelLabel, `${a.toolUses} lần gọi tool`].filter(Boolean).join(' · '));
         } else {
             titleEl.textContent = 'Agent';
             metaEl.replaceChildren('Không còn thấy agent này trong session.');
@@ -1122,6 +1128,13 @@ export function openTrail(sessionId: string, agentId: string): void {
 }
 
 /** Tells the panel about the board's latest snapshot. */
+/** Tells the panel about the "Ẩn nội dung" switch. */
+export function setPrivacy(on: boolean): void {
+    if (privacy === on) return;
+    privacy = on;
+    if (showing === 'trail') draw();
+}
+
 export function sync(snap: monitor.Snapshot): void {
     board = snap;
     if (showing === 'none') return;

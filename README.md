@@ -41,7 +41,7 @@ Ba công tắc ở góc trên:
 |---|---|
 | **Báo khi xong** | Báo khi một session xong lượt, khi nó dừng lại chờ bạn trả lời hoặc duyệt, và khi một agent làm xong. Xem [App báo bằng cách nào](#app-báo-bằng-cách-nào). |
 | **Ẩn agent đã kết thúc** | Chỉ để lại agent chưa xong: đang chạy, chờ lệnh hoặc im lặng. |
-| **Ẩn nội dung** | Giấu câu lệnh, yêu cầu và kết quả, dùng khi chia sẻ màn hình. Thông báo cũng bỏ tên session và tên agent. |
+| **Ẩn nội dung** | Dùng khi chia sẻ màn hình. Giấu câu lệnh, yêu cầu và kết quả, cùng những gì gọi tên công việc: tiêu đề session, mô tả agent, tên nhánh, tên giai đoạn của workflow. Bảng khi đó gọi session bằng 8 ký tự đầu của mã session, gọi agent bằng loại agent. Tên project, số liệu và tên tool vẫn hiện. Thông báo cũng bỏ tên session và tên agent. |
 
 Trạng thái của session (dòng đầu mỗi khối) do Claude Code tự ghi: **Đang chạy** khi một lượt đang diễn ra, **Rảnh** khi lượt đã xong, **Chờ bạn trả lời** khi session dừng giữa lượt để hỏi bạn hoặc chờ bạn duyệt. Session do app mở mà đang xin phép thì ghi **Chờ bạn cho phép**, vì câu trả lời nằm ngay trong app. Số session đang chờ bạn hiện riêng trong dòng chữ lớn ở đầu trang.
 

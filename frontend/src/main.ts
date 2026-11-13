@@ -111,6 +111,7 @@ const view: ViewState = {
     hidden: recallHidden(),
     showHidden: false,
 };
+chat.setPrivacy(view.privacy);
 
 // Which of the two pages is on screen: the board of what runs now, or the
 // history of what the days cost.
@@ -172,10 +173,11 @@ const switches = h('div', {class: 'switches'},
             render();
         }),
     toggle('sw-privacy', 'Ẩn nội dung',
-        'Giấu câu lệnh, yêu cầu và kết quả, dùng khi chia sẻ màn hình. Tên project, số liệu và tên tool vẫn hiện.',
+        'Giấu câu lệnh, yêu cầu, kết quả, tiêu đề session, mô tả agent và tên nhánh, dùng khi chia sẻ màn hình. Tên project, số liệu và tên tool vẫn hiện. Khung chat của session app mở không bị che.',
         view.privacy, on => {
             view.privacy = on;
             remember('privacy', on);
+            chat.setPrivacy(on);
             void pushOptions(false);
             render();
         }),
