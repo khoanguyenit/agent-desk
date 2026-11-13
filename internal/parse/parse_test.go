@@ -106,7 +106,8 @@ func TestResponseRepeatedPerBlockIsCountedOnce(t *testing.T) {
 	if f.Model != "claude-opus-5-5" || f.GitBranch != "main" {
 		t.Fatalf("model=%q branch=%q", f.Model, f.GitBranch)
 	}
-	if f.Last.Kind != "tool" || f.Last.Tool != "Bash" || f.Last.Detail != "Run the tests" {
+	// The board shows the command that ran, not the agent's caption for it.
+	if f.Last.Kind != "tool" || f.Last.Tool != "Bash" || f.Last.Detail != "go test ./..." {
 		t.Fatalf("last activity = %+v", f.Last)
 	}
 	if got := f.LastAt.Sub(f.FirstAt); got != time.Minute {
@@ -419,21 +420,26 @@ func TestToolDetail(t *testing.T) {
 		input  string
 		want   string
 		isPath bool
+		note   string
 	}{
-		{`{"file_path":"d:\\x\\a.go","old_string":"a"}`, `d:\x\a.go`, true},
-		{`{"command":"npm test","description":"Run the unit tests"}`, "Run the unit tests", false},
-		{`{"command":"npm test"}`, "npm test", false},
-		{`{"pattern":"TODO","path":"src"}`, "TODO", false},
-		{`{"path":"src"}`, "src", true},
-		{`{"url":"https://example.com","prompt":"summarise"}`, "https://example.com", false},
-		{`{"file_path":123,"command":"ls"}`, "ls", false},
-		{`{"unknown":"x"}`, "", false},
-		{`not json`, "", false},
+		{`{"file_path":"d:\\x\\a.go","old_string":"a"}`, `d:\x\a.go`, true, ""},
+		// The command is what ran; the agent's caption for it is only a note.
+		{`{"command":"rm -rf build && npm test","description":"Run the unit tests"}`, "rm -rf build && npm test", false, "Run the unit tests"},
+		{`{"command":"npm test"}`, "npm test", false, ""},
+		{`{"command":"","description":"Run the unit tests"}`, "Run the unit tests", false, ""},
+		// A subagent's task is told by its description, not its long prompt.
+		{`{"description":"Review the diff","prompt":"You are a reviewer…","subagent_type":"code-reviewer"}`, "Review the diff", false, ""},
+		{`{"pattern":"TODO","path":"src"}`, "TODO", false, ""},
+		{`{"path":"src"}`, "src", true, ""},
+		{`{"url":"https://example.com","prompt":"summarise"}`, "https://example.com", false, ""},
+		{`{"file_path":123,"command":"ls"}`, "ls", false, ""},
+		{`{"unknown":"x"}`, "", false, ""},
+		{`not json`, "", false, ""},
 	}
 	for _, c := range cases {
-		got, isPath := toolDetail([]byte(c.input))
-		if got != c.want || isPath != c.isPath {
-			t.Errorf("toolDetail(%s) = %q,%v want %q,%v", c.input, got, isPath, c.want, c.isPath)
+		got, isPath, note := toolDetail([]byte(c.input))
+		if got != c.want || isPath != c.isPath || note != c.note {
+			t.Errorf("toolDetail(%s) = %q,%v,%q want %q,%v,%q", c.input, got, isPath, note, c.want, c.isPath, c.note)
 		}
 	}
 }

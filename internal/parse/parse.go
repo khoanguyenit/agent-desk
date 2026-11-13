@@ -413,7 +413,7 @@ func (f *File) onAssistant(rl rawLine, ts time.Time) {
 					continue
 				}
 				ended, awaiting = false, true
-				detail, isPath := toolDetail(b.Input)
+				detail, isPath, _ := toolDetail(b.Input)
 				f.Last = Activity{Kind: "tool", Tool: name, Detail: detail, IsPath: isPath, At: ts}
 			case "text":
 				if s := snippet(b.Text); s != "" {
@@ -577,14 +577,18 @@ func decodeBlocks(raw json.RawMessage) []rawBlock {
 }
 
 // detailKeys lists the tool input fields worth showing, most telling first.
+// A command comes before the agent's description of it: what ran is what the
+// board says ran, and the agent's words about it are only its claim. For a
+// subagent's task the description stays first, because the prompt it
+// summarises is long and is not an action in itself.
 var detailKeys = []struct {
 	name   string
 	isPath bool
 }{
 	{"file_path", true},
 	{"notebook_path", true},
-	{"description", false},
 	{"command", false},
+	{"description", false},
 	{"pattern", false},
 	{"query", false},
 	{"url", false},
@@ -593,10 +597,13 @@ var detailKeys = []struct {
 	{"path", true},
 }
 
-func toolDetail(input json.RawMessage) (string, bool) {
+// toolDetail returns the input field of a tool call worth showing, whether it
+// is a path, and, when the field shown is a command, the agent's own
+// description of that command, which a reader may want beside it.
+func toolDetail(input json.RawMessage) (detail string, isPath bool, note string) {
 	var fields map[string]json.RawMessage
 	if len(input) == 0 || json.Unmarshal(input, &fields) != nil {
-		return "", false
+		return "", false, ""
 	}
 	for _, k := range detailKeys {
 		v, ok := fields[k.name]
@@ -613,11 +620,18 @@ func toolDetail(input json.RawMessage) (string, bool) {
 		} else {
 			s = snippet(s)
 		}
-		if s != "" {
-			return s, k.isPath
+		if s == "" {
+			continue
 		}
+		if k.name == "command" {
+			var d string
+			if json.Unmarshal(fields["description"], &d) == nil {
+				note = snippet(d)
+			}
+		}
+		return s, k.isPath, note
 	}
-	return "", false
+	return "", false, ""
 }
 
 // report returns the text of a subagent's final result, whichever field the

@@ -60,7 +60,8 @@ func TestTrailFollowsATaskFromPromptToReport(t *testing.T) {
 	if !read.IsPath || !strings.HasSuffix(read.Detail, `handler.go`) || !strings.Contains(read.Result, "func Handle()") {
 		t.Errorf("read step = %+v", read)
 	}
-	if steps[3].Detail != "Run the transfer tests" || steps[3].Result != "FAIL: TestHandle" {
+	// What ran is the command; the agent's caption rides along as its claim.
+	if steps[3].Detail != "go test ./internal/transfer/" || steps[3].Note != "Run the transfer tests" || steps[3].Result != "FAIL: TestHandle" {
 		t.Errorf("bash step = %+v", steps[3])
 	}
 	if steps[1].At.IsZero() || !steps[4].At.After(steps[1].At) {

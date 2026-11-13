@@ -2119,6 +2119,12 @@ button {
     color: var(--ink-3);
 }
 
+/* The agent's words about a command, kept apart from the command. */
+.msg-claim {
+    margin: 6px 0;
+    font-size: 12.5px;
+}
+
 .msg-details > summary {
     display: flex;
     align-items: baseline;

@@ -937,6 +937,7 @@ export namespace monitor {
 	    kind: string;
 	    tool: string;
 	    detail: string;
+	    note: string;
 	    result: string;
 	    done: boolean;
 	    failed: boolean;
@@ -951,6 +952,7 @@ export namespace monitor {
 	        this.kind = source["kind"];
 	        this.tool = source["tool"];
 	        this.detail = source["detail"];
+	        this.note = source["note"];
 	        this.result = source["result"];
 	        this.done = source["done"];
 	        this.failed = source["failed"];

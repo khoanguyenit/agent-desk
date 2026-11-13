@@ -181,6 +181,9 @@ interface Entry {
     tool: string;
     line: string;
     input: string;
+    // note is the agent's own description of a command: its claim, shown
+    // apart from the command and never in its place.
+    note?: string;
     change?: agent.Change;
     result: string;
     failed: boolean;
@@ -259,7 +262,7 @@ function trailEntries(): Entry[] {
         if (!trailKeys.has(id)) trailKeys.set(id, trailKeys.size + 1);
         const base: Entry = {
             key: `t${trailKeys.get(id)}`,
-            stamp: `${st.done}|${st.failed}|${st.detail.length}|${st.result.length}|${hide}`,
+            stamp: `${st.done}|${st.failed}|${st.detail.length}|${(st.note ?? '').length}|${st.result.length}|${hide}`,
             kind: 'text', who: '', text: hide ? HIDDEN : st.detail, tool: '', line: '', input: '', result: '',
             failed: false, status: null, live: false, openFirst: false, at: st.atMs,
         };
@@ -271,7 +274,7 @@ function trailEntries(): Entry[] {
             case 'tool':
                 return {
                     ...base, kind: 'tool' as const, text: '', tool: st.tool, line: hide ? '' : st.detail,
-                    input: hide ? '' : st.detail, result: st.result, failed: st.failed,
+                    input: hide ? '' : st.detail, note: hide ? '' : st.note, result: st.result, failed: st.failed,
                     status: !st.done ? {cls: 'is-running', label: 'chưa có kết quả'}
                         : st.failed ? {cls: 'is-error', label: 'lỗi'} : {cls: 'is-ok', label: 'xong'},
                 };
@@ -335,6 +338,9 @@ function entryNode(e: Entry, dir: string): HTMLElement {
                     e.status && h('span', {class: `msg-tool-status ${e.status.cls}`}, e.status.label),
                 ),
                 e.change ? changeNode(e.change, dir) : e.input && h('pre', {class: 'msg-code'}, e.input),
+                e.note && h('div', {class: 'msg-claim'},
+                    h('span', {class: 'permit-label'}, 'Agent mô tả lệnh này là'),
+                    h('p', {class: 'permit-claim'}, e.note)),
                 e.result && h('pre', {class: 'msg-code msg-result' + (e.failed ? ' is-error' : '')}, e.result),
                 !e.change && !e.input && !e.result && h('p', {class: 'msg-none'}, 'Không có gì thêm để xem.'),
             );

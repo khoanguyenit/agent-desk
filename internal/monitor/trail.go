@@ -23,6 +23,9 @@ type TrailStep struct {
 	Kind   string `json:"kind"`
 	Tool   string `json:"tool"`
 	Detail string `json:"detail"`
+	// Note is the agent's own description of the command in Detail, to be
+	// shown as its claim and never in place of the command.
+	Note string `json:"note"`
 	// Result is the beginning of a tool's result. Done is false while the
 	// tool has not returned; Failed is true when it returned an error.
 	Result string `json:"result"`
@@ -95,7 +98,7 @@ func (s *Service) Trail(sessionID, agentID string, hide bool) (Trail, error) {
 	for _, st := range steps {
 		row := TrailStep{Kind: st.Kind, Tool: st.Tool, Done: st.Done, Failed: st.Failed, AtMs: ms(st.At)}
 		if !hide {
-			row.Detail, row.Result = st.Detail, st.Result
+			row.Detail, row.Note, row.Result = st.Detail, st.Note, st.Result
 			if st.IsPath {
 				row.Detail = relativeTo(ref.cwd, st.Detail)
 			}

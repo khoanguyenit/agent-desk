@@ -40,6 +40,9 @@ type Step struct {
 	// IsPath marks a Detail that is a file path, which the caller may show
 	// relative to the project.
 	IsPath bool
+	// Note is the agent's own description of a command shown in Detail: its
+	// claim about the command, not the command.
+	Note string
 	// Result is the beginning of a tool's result; Done is false while the
 	// tool has not returned, and Failed is true when it returned an error.
 	Result string
@@ -127,10 +130,10 @@ func Trail(path string, acceptSidechain bool, maxBytes int64, maxSteps int) (ste
 					if _, dup := byTool[b.ID]; dup && b.ID != "" {
 						continue
 					}
-					detail, isPath := toolDetail(b.Input)
+					detail, isPath, note := toolDetail(b.Input)
 					steps = append(steps, Step{
 						Kind: StepTool, Tool: clean.Text(b.Name, labelRunes),
-						Detail: detail, IsPath: isPath, At: at, toolUseID: b.ID,
+						Detail: detail, IsPath: isPath, Note: note, At: at, toolUseID: b.ID,
 					})
 					if b.ID != "" {
 						byTool[b.ID] = len(steps) - 1
