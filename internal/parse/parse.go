@@ -59,6 +59,17 @@ type Activity struct {
 	At     time.Time
 }
 
+// Limit is a usage limit a thread ran into.
+type Limit struct {
+	// Kind is Claude Code's name for the limit, such as "five_hour" or
+	// "seven_day"; empty when the line does not say.
+	Kind string
+	// ResetsAt is when the limit lifts; zero when the line does not say.
+	ResetsAt time.Time
+	// At is when the refusal was written.
+	At time.Time
+}
+
 type counted struct {
 	key    Key
 	tokens usage.Tokens
@@ -107,6 +118,16 @@ type File struct {
 	// AwaitingTool is true while the last thing in the transcript is a tool
 	// call whose result has not arrived: the agent is waiting, not idle.
 	AwaitingTool bool
+	// Limit is set when the last answer the thread got was a refusal for a
+	// usage limit, and cleared by the next real response. RespondedAt is when
+	// the thread last got a real response from the model.
+	Limit       *Limit
+	RespondedAt time.Time
+	// Account is the Claude account the session runs under, as its
+	// session-owner lines name it, or empty when they do not. It serves only
+	// to tell which sessions share a usage limit: it is never shown, and
+	// never stored.
+	Account string
 
 	loc             *time.Location
 	acceptSidechain bool
@@ -163,6 +184,9 @@ func (f *File) reset() {
 	f.BadUsage = 0
 	f.TurnEnded = false
 	f.AwaitingTool = false
+	f.Limit = nil
+	f.RespondedAt = time.Time{}
+	f.Account = ""
 }
 
 // Update reads whatever was appended since the previous call. A final line
@@ -283,6 +307,23 @@ type rawLine struct {
 	AITitle      string          `json:"aiTitle"`
 	LastPrompt   string          `json:"lastPrompt"`
 	TotalCostUSD *float64        `json:"totalCostUSD"`
+	// When the model is not reached because a usage limit has been used up,
+	// Claude Code writes an assistant line of its own with error
+	// "rate_limit", naming the limit and when it lifts. Older versions
+	// leave the details out.
+	Error          string `json:"error"`
+	APIErrorParams *struct {
+		RateLimit *rawRateLimit `json:"rate_limit_info"`
+	} `json:"apiErrorParams"`
+	QuotaLimits *rawRateLimit `json:"quotaLimits"`
+	// AccountUUID is on session-owner lines: the account a session runs
+	// under, whose usage limits it shares.
+	AccountUUID string `json:"accountUuid"`
+}
+
+type rawRateLimit struct {
+	Type     string  `json:"rateLimitType"`
+	ResetsAt float64 `json:"resetsAt"`
 }
 
 type rawMessage struct {
@@ -388,7 +429,45 @@ func (f *File) consume(line []byte) {
 			f.RecordedCostUSD = *rl.TotalCostUSD
 			f.HasRecordedCost = true
 		}
+	case "session-owner":
+		if accountID.MatchString(rl.AccountUUID) {
+			f.Account = rl.AccountUUID
+		}
 	}
+}
+
+// accountID is the shape of an account id worth keeping: anything else is
+// ignored rather than held.
+var accountID = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+// limitOf reads the usage limit a refusal line names.
+func limitOf(rl *rawLine, at time.Time) *Limit {
+	l := &Limit{At: at}
+	info := rl.QuotaLimits
+	if rl.APIErrorParams != nil && rl.APIErrorParams.RateLimit != nil {
+		info = rl.APIErrorParams.RateLimit
+	}
+	if info != nil {
+		l.Kind = clean.Text(info.Type, labelRunes)
+		l.ResetsAt = epoch(info.ResetsAt)
+	}
+	return l
+}
+
+// epoch reads a time written as Unix seconds, or milliseconds when the number
+// is that large. Anything outside a plausible range reads as unknown.
+func epoch(v float64) time.Time {
+	if v <= 0 {
+		return time.Time{}
+	}
+	if v > 1e12 {
+		v /= 1000
+	}
+	t := time.Unix(int64(v), 0)
+	if t.Year() < 2020 || t.Year() > 2100 {
+		return time.Time{}
+	}
+	return t
 }
 
 // Tools a subagent calls to return its result and end its turn. Which one is
@@ -431,6 +510,9 @@ func (f *File) onAssistant(rl rawLine, ts time.Time) {
 			}
 		}
 		f.TurnEnded, f.AwaitingTool = ended, awaiting
+		if rl.Error == "rate_limit" {
+			f.Limit = limitOf(&rl, ts)
+		}
 	}
 
 	// Lines Claude Code writes for its own messages (errors, interruptions)
@@ -473,6 +555,11 @@ func (f *File) onAssistant(rl rawLine, ts time.Time) {
 	if mainThread {
 		f.ContextTokens = nonNegative(u.Input) + nonNegative(u.CacheCreation) + nonNegative(u.CacheRead) + nonNegative(u.Output)
 		f.Model = model
+		// The model answered: whatever limit stood in the way has lifted.
+		f.Limit = nil
+		if ts.After(f.RespondedAt) {
+			f.RespondedAt = ts
+		}
 	}
 }
 

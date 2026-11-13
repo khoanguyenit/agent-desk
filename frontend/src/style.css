@@ -265,6 +265,23 @@ button {
     color: var(--warn);
 }
 
+/* A usage limit holding work, under the caption. */
+.lead-limit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 0;
+    font-size: 13.5px;
+    font-weight: 500;
+}
+
+.lead-limit .ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--del);
+}
+
 /* ---- the meter ---------------------------------------------------------------- */
 
 /* The money, read like a till: two totals at the head of two columns, the
@@ -849,6 +866,9 @@ button {
 
 .strip.is-running { border-left-color: var(--live); }
 .strip.is-quiet { border-left-color: var(--warn); }
+/* Held by a usage limit: not at work, not finished either. It lies flat like
+   a finished strip but keeps a tab in the colour of the stop. */
+.strip.is-limited { border-left-color: var(--del); }
 
 .strip.is-running + .strip:not(.is-running):not(.is-quiet),
 .strip.is-quiet + .strip:not(.is-running):not(.is-quiet) {
@@ -1050,6 +1070,15 @@ button {
 
 .status.is-quiet .ic {
     color: var(--warn);
+}
+
+.status.is-limited {
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.status.is-limited .ic {
+    color: var(--del);
 }
 
 .status[title] {
@@ -1607,6 +1636,19 @@ button {
     height: 10px;
     border-radius: 1px;
     background: var(--warn);
+}
+
+/* Held by a usage limit: a bar across, like a closed gate, and the lamp in
+   the colour of the stop. It never moves. */
+.w-blocked i {
+    width: 12px;
+    height: 3px;
+    border-radius: 1px;
+    background: var(--del);
+}
+
+.worker.is-limited .w-lamp {
+    background: var(--del);
 }
 
 /* The typing dots are the only thing that moves. The figures themselves stay

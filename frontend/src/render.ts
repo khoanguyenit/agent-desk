@@ -27,7 +27,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-export type IconName = 'dot' | 'ring' | 'pause' | 'square' | 'check';
+export type IconName = 'dot' | 'ring' | 'pause' | 'square' | 'check' | 'bar';
 
 export function icon(name: IconName): SVGElement {
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -58,6 +58,11 @@ export function icon(name: IconName): SVGElement {
                 d: 'M2.4 6.5 5 9 9.7 3.5', fill: 'none', stroke: 'currentColor',
                 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
             });
+            break;
+        case 'bar':
+            // A no-entry sign: a usage limit stands in the way.
+            shape('circle', {cx: '6', cy: '6', r: '4.3', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6'});
+            shape('rect', {x: '3.4', y: '5.1', width: '5.2', height: '1.8', rx: '0.5', fill: 'currentColor'});
             break;
     }
     return svg;
@@ -165,7 +170,17 @@ export function lead(snap: monitor.Snapshot): HTMLElement {
             asking > 0 && h('span', {class: (headline ? 'headline-quiet ' : '') + 'headline-asking'}, icon('pause'), `${asking} session chờ bạn`),
             c.quietAgents > 0 && h('span', {class: 'headline-quiet'}, icon('pause'), `${c.quietAgents} agent im lặng`),
         ),
+        // A usage limit holds work across projects at once, so it is said
+        // once here rather than only row by row.
+        ...(snap.limits ?? []).map(g => h('p', {class: 'lead-limit', role: 'status'},
+            icon('bar'),
+            `Chạm ${f.limitName(g.kind)}: ${heldText(g.sessions, g.agents)} bị chặn ${f.limitUntil(g.resetsAtMs, snap.generatedAtMs)}.`)),
     );
+}
+
+// heldText says how much a usage limit holds: "2 session và 12 agent".
+function heldText(sessions: number, agents: number): string {
+    return [sessions > 0 ? `${sessions} session` : '', agents > 0 ? `${agents} agent` : ''].filter(Boolean).join(' và ');
 }
 
 function costCell(sp: monitor.Spend): HTMLElement {
@@ -549,7 +564,19 @@ export interface StatusView {
     title?: string;
 }
 
-export function agentStatus(a: Agent): StatusView {
+// limitStatus is the status of a thread a usage limit holds. Claude Code
+// will not reach the model for it until the limit lifts, and a subagent so
+// stopped does not start again by itself.
+function limitStatus(l: monitor.Limit, nowMs: number): StatusView {
+    return {
+        cls: 'is-limited', icon: 'bar',
+        label: l.resetsAtMs > 0 ? `Bị chặn tới ${f.hourMinute(l.resetsAtMs)}` : 'Bị chặn',
+        title: `Chạm ${f.limitName(l.kind)}, ${f.limitUntil(l.resetsAtMs, nowMs)}. Claude Code không gọi model cho tới khi giới hạn mở lại.`,
+    };
+}
+
+export function agentStatus(a: Agent, nowMs = Date.now()): StatusView {
+    if (a.status === 'limited' && a.limit) return limitStatus(a.limit, nowMs);
     switch (a.status) {
         case 'running':
             return {cls: 'is-running', icon: 'dot', label: 'Đang chạy'};
@@ -574,7 +601,8 @@ export function agentStatus(a: Agent): StatusView {
     }
 }
 
-export function sessionStatus(s: Session): StatusView {
+export function sessionStatus(s: Session, nowMs = Date.now()): StatusView {
+    if (s.limit) return limitStatus(s.limit, nowMs);
     if (s.awaitingUser) {
         return {
             cls: 'is-quiet', icon: 'pause', label: 'Chờ bạn cho phép',
@@ -741,8 +769,11 @@ function sessionStrip(s: Session, nowMs: number, view: ViewState, beat: HTMLElem
 
 function sessionBlock(s: Session, nowMs: number, view: ViewState): HTMLElement {
     const sessionBeat = s.status === 'busy' ? pulse(s.pulse ?? [], true, nowMs) : null;
-    const active = s.agents.filter(isActive);
-    const ended = s.agents.filter(a => !isActive(a));
+    // An agent held by a usage limit has not finished: it stays in view with
+    // the ones at work, and is not folded away with the ended ones.
+    const shownFirst = (a: monitor.Agent) => isActive(a) || a.status === 'limited';
+    const active = s.agents.filter(shownFirst);
+    const ended = s.agents.filter(a => !shownFirst(a));
     // Under a filter the list is already short: nothing of it is folded away.
     const open = view.expanded.has(s.id) || view.filter.trim() !== '';
     const shown = view.hideEnded ? [] : open ? ended : ended.slice(0, ENDED_SHOWN);

@@ -11,7 +11,9 @@ import {h} from './render';
 // markup changes only when who-is-working changes, so the page's refresh keeps
 // the same nodes and the animation runs on without restarting.
 
-type WorkerState = 'running' | 'waiting' | 'quiet' | 'idle';
+// limited: held by a usage limit. It does not move, and its mark is not the
+// pause of a figure waiting for an answer: no answer will start it again.
+type WorkerState = 'running' | 'waiting' | 'quiet' | 'limited' | 'idle';
 
 interface Worker {
     lead: boolean;
@@ -32,10 +34,15 @@ function workersOf(p: monitor.Project): { workers: Worker[]; ended: number } {
         if (own.duplicate) continue;
         // A session that has stopped to ask for permission is held up, and
         // is drawn so even though its process still counts as busy.
-        leads.push({lead: true, state: own.awaitingUser || s.status === 'waiting' ? 'waiting' : s.status === 'busy' ? 'running' : 'idle'});
+        leads.push({
+            lead: true,
+            state: s.limit ? 'limited' : own.awaitingUser || s.status === 'waiting' ? 'waiting' : s.status === 'busy' ? 'running' : 'idle',
+        });
         for (const a of s.agents) {
             if (a.status === 'running') {
                 agents.push({lead: false, state: 'running'});
+            } else if (a.status === 'limited') {
+                agents.push({lead: false, state: 'limited'});
             } else if (a.status === 'quiet') {
                 const waiting = (a as monitor.Agent & { awaitingTool?: boolean }).awaitingTool;
                 agents.push({lead: false, state: waiting ? 'waiting' : 'quiet'});
@@ -45,7 +52,7 @@ function workersOf(p: monitor.Project): { workers: Worker[]; ended: number } {
         }
     }
     // Those at work sit together, next to the session's own figure.
-    const order: WorkerState[] = ['running', 'waiting', 'quiet', 'idle'];
+    const order: WorkerState[] = ['running', 'waiting', 'quiet', 'limited', 'idle'];
     agents.sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state));
     return {workers: [...leads, ...agents], ended};
 }
@@ -58,6 +65,8 @@ function figure(w: Worker, index: number): HTMLElement {
         bubble = h('span', {class: 'w-bubble w-typing'}, h('i'), h('i'), h('i'));
     } else if (w.state === 'waiting' || w.state === 'quiet') {
         bubble = h('span', {class: 'w-bubble w-paused'}, h('i'), h('i'));
+    } else if (w.state === 'limited') {
+        bubble = h('span', {class: 'w-bubble w-blocked'}, h('i'));
     }
     // A stagger class keeps neighbours from moving in step.
     return h('span', {class: `worker is-${w.state}${w.lead ? ' is-lead' : ''} d${index % 5}`},
@@ -76,6 +85,7 @@ function desk(p: monitor.Project, open: boolean): HTMLElement {
     const {workers, ended} = workersOf(p);
     const running = workers.filter(w => w.state === 'running').length;
     const held = workers.filter(w => w.state === 'waiting' || w.state === 'quiet').length;
+    const blocked = workers.filter(w => w.state === 'limited').length;
 
     const seats = h('span', {class: 'desk-seats', 'data-key': 'seats', 'aria-hidden': 'true'});
     workers.slice(0, SEATS).forEach((w, i) => seats.append(figure(w, i)));
@@ -86,7 +96,7 @@ function desk(p: monitor.Project, open: boolean): HTMLElement {
     // A project whose sessions have all closed keeps its desk for the day,
     // empty: what it cost is still part of the total.
     const closed = ((p as monitor.Project & { closed?: unknown[] }).closed ?? []).length;
-    const now = [count(running, 'đang chạy'), count(held, 'đang chờ')].filter(Boolean).join(' · ')
+    const now = [count(running, 'đang chạy'), count(held, 'đang chờ'), count(blocked, 'bị chặn')].filter(Boolean).join(' · ')
         || (p.sessions.length > 0 ? 'đang rảnh' : closed > 0 ? `${closed} session đã đóng` : 'chưa có session');
 
     // Who sits where changes only when work starts or stops, and the key

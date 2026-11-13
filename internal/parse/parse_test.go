@@ -608,3 +608,85 @@ func TestDirectoryIsNotATranscript(t *testing.T) {
 		t.Fatal("expected an error when the path is a directory")
 	}
 }
+
+// refusal is the line Claude Code writes in the model's place when a usage
+// limit is used up, shaped like the ones on disk (2.1.322).
+func refusal(id, ts, kind string, resetsAt int64) string {
+	info := ""
+	if kind != "" {
+		info = fmt.Sprintf(`,"apiErrorParams":{"rate_limit_info":{"status":"rejected","rateLimitType":%q,"resetsAt":%d}},"quotaLimits":{"status":"rejected","rateLimitType":%q,"resetsAt":%d}`,
+			kind, resetsAt, kind, resetsAt)
+	}
+	return fmt.Sprintf(`{"type":"assistant","isSidechain":false,"timestamp":%q,"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429%s,"message":{"id":%q,"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"You've hit your weekly limit"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`,
+		ts, info, id)
+}
+
+func TestUsageLimitIsKeptUntilTheModelAnswersAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	reset := time.Date(2026, 11, 12, 19, 0, 0, 0, time.UTC) // 02:00 on the 13th in UTC+7
+	writeFile(t, path, lines(
+		`{"type":"session-owner","sessionId":"s","accountUuid":"0f0e0d0c-1111-2222-3333-444455556666","organizationUuid":"org"}`,
+		assistant("msg_1", "claude-fable-5-2", "2026-11-12T16:38:00.000Z", textBlock, usageJSON(1, 1, 0, 0)),
+		refusal("msg_2", "2026-11-12T16:39:00.000Z", "seven_day", reset.Unix()),
+	))
+	f := NewFile(path, time.UTC, false)
+	mustUpdate(t, f)
+
+	if f.Limit == nil || f.Limit.Kind != "seven_day" || !f.Limit.ResetsAt.Equal(reset) {
+		t.Fatalf("limit = %+v", f.Limit)
+	}
+	if want := time.Date(2026, 11, 12, 16, 39, 0, 0, time.UTC); !f.Limit.At.Equal(want) {
+		t.Errorf("limit hit at %v, want %v", f.Limit.At, want)
+	}
+	if want := time.Date(2026, 11, 12, 16, 38, 0, 0, time.UTC); !f.RespondedAt.Equal(want) {
+		t.Errorf("last real response at %v, want %v", f.RespondedAt, want)
+	}
+	if f.Account != "0f0e0d0c-1111-2222-3333-444455556666" {
+		t.Errorf("account = %q", f.Account)
+	}
+	// The refusal is not a response: it costs nothing and has no model.
+	if got := total(f); got.Requests != 1 || f.Model != "claude-fable-5-2" {
+		t.Errorf("usage = %+v, model = %q", got, f.Model)
+	}
+
+	// The limit is reset, and the model answers again.
+	appendLines(t, path, assistant("msg_3", "claude-fable-5-2", "2026-11-12T17:10:00.000Z", textBlock, usageJSON(1, 1, 0, 0)))
+	mustUpdate(t, f)
+	if f.Limit != nil {
+		t.Fatalf("limit still set after a real response: %+v", f.Limit)
+	}
+}
+
+// Older versions write the refusal without saying which limit or when it
+// lifts. It still counts as one, with nothing made up.
+func TestUsageLimitWithoutDetails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeFile(t, path, lines(refusal("msg_1", "2026-10-22T00:26:00.000Z", "", 0)))
+	f := NewFile(path, time.UTC, false)
+	mustUpdate(t, f)
+	if f.Limit == nil || f.Limit.Kind != "" || !f.Limit.ResetsAt.IsZero() {
+		t.Fatalf("limit = %+v", f.Limit)
+	}
+}
+
+func TestSessionOwnerIgnoresOddAccountIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	writeFile(t, path, lines(`{"type":"session-owner","accountUuid":"not an id; rm -rf /"}`))
+	f := NewFile(path, time.UTC, false)
+	mustUpdate(t, f)
+	if f.Account != "" {
+		t.Fatalf("account = %q", f.Account)
+	}
+}
+
+func appendLines(t *testing.T, path string, l ...string) {
+	t.Helper()
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	if _, err := fh.WriteString(lines(l...)); err != nil {
+		t.Fatal(err)
+	}
+}

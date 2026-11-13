@@ -66,7 +66,31 @@ const (
 	StatusQuiet   = "quiet"
 	StatusStopped = "stopped"
 	StatusDone    = "done"
+	// StatusLimited: the agent's last answer was a refusal for a usage limit
+	// that has not lifted. It is not working, and will not until it does.
+	StatusLimited = "limited"
 )
+
+// Limit is a usage limit a session or agent ran into and that has not
+// lifted: Claude Code will not reach the model for it until it does.
+type Limit struct {
+	// Kind is Claude Code's name for the limit, such as "five_hour" or
+	// "seven_day"; empty when the transcript does not say.
+	Kind string `json:"kind"`
+	// ResetsAtMs is when it lifts, or zero when the transcript does not say.
+	ResetsAtMs int64 `json:"resetsAtMs"`
+	// AtMs is when the refusal was written.
+	AtMs int64 `json:"atMs"`
+}
+
+// LimitGroup is one usage limit that stops work on the page, and how much it
+// stops. Sessions on one account that ran into the same limit share it.
+type LimitGroup struct {
+	Kind       string `json:"kind"`
+	ResetsAtMs int64  `json:"resetsAtMs"`
+	Sessions   int    `json:"sessions"`
+	Agents     int    `json:"agents"`
+}
 
 // CostParts is a cost in dollars split by what was paid for.
 type CostParts struct {
@@ -120,6 +144,12 @@ type Agent struct {
 	Today         Spend    `json:"today"`
 	Activity      Activity `json:"activity"`
 	Pulse         []int    `json:"pulse"`
+	// Limit is set while the agent is held by a usage limit; its status is
+	// then StatusLimited.
+	Limit *Limit `json:"limit"`
+	// unlimited is the status the agent has when its limit is found to
+	// have lifted.
+	unlimited string
 }
 
 // Session is one running Claude Code process.
@@ -164,6 +194,11 @@ type Session struct {
 	// AwaitingUser marks a managed session that has stopped to ask the user
 	// for permission. Also set by the app.
 	AwaitingUser bool `json:"awaitingUser"`
+	// Limit is set while the main thread is held by a usage limit.
+	Limit *Limit `json:"limit"`
+	// account is the Claude account the session runs under, to tell which
+	// sessions share a limit. It never leaves this package.
+	account string
 }
 
 // ClosedSession is a session that has ended but was at work today. Its
@@ -274,6 +309,9 @@ type Snapshot struct {
 	PricingSource string     `json:"pricingSource"`
 	PricingPath   string     `json:"pricingPath"`
 	Warnings      []string   `json:"warnings"`
+	// Limits are the usage limits holding work on the page, soonest to lift
+	// first.
+	Limits []LimitGroup `json:"limits"`
 }
 
 // Options configures a Service. Zero values select the real environment.
@@ -489,6 +527,9 @@ type build struct {
 	// tallied holds the transcripts already added to the totals, so a
 	// session open in two processes is counted once.
 	tallied map[string]bool
+	// responded is, per account, when any of its sessions last got a real
+	// answer from the model.
+	responded map[string]time.Time
 	// Problems met along the way, reported once as warnings.
 	staleFiles int
 	badLines   int
@@ -510,6 +551,7 @@ func (s *Service) Snapshot() Snapshot {
 		Projects:      []Project{},
 		Models:        []ModelRow{},
 		Warnings:      []string{},
+		Limits:        []LimitGroup{},
 	}
 
 	prices, err := s.prices()
@@ -529,12 +571,13 @@ func (s *Service) Snapshot() Snapshot {
 	}
 
 	b := &build{
-		s:       s,
-		now:     now,
-		today:   snap.Today,
-		prices:  prices,
-		models:  map[string]*modelAcc{},
-		tallied: map[string]bool{},
+		s:         s,
+		now:       now,
+		today:     snap.Today,
+		prices:    prices,
+		models:    map[string]*modelAcc{},
+		tallied:   map[string]bool{},
+		responded: map[string]time.Time{},
 	}
 
 	live := make(map[string]bool, len(sessions))
@@ -649,6 +692,14 @@ func (s *Service) Snapshot() Snapshot {
 		snap.Counts.ClosedSessions++
 	}
 	snap.ClosedAll, snap.ClosedToday = closedAll.spend(), closedToday.spend()
+
+	// Usage limits are settled once every session has been heard, the closed
+	// ones too: any of them may show that its account was answered since.
+	settle := make([]*Project, 0, len(byProject))
+	for _, p := range byProject {
+		settle = append(settle, &p.project)
+	}
+	snap.Limits = b.settleLimits(settle, &snap.Counts)
 
 	// Forget files that have not been needed for a while.
 	for path, e := range s.files {
@@ -922,6 +973,12 @@ func (b *build) closed(e endedTranscript) (cs ClosedSession, cwd string, all, to
 		states = append(states, fa)
 	}
 	agents := len(states)
+	// A closed session may be the one that shows its account was answered
+	// after a limit, so it is heard like a running one.
+	b.heard(f.Account, f.RespondedAt)
+	for _, st := range states {
+		b.heard(f.Account, st.RespondedAt)
+	}
 	u, fresh := b.usage(e.Path, f, paths, states)
 	if fresh {
 		// Before anything else: a session whose last lines were written
@@ -1027,6 +1084,9 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 	sess.Duplicate = !count
 
 	sess.HasTranscript = true
+	sess.account = f.Account
+	b.heard(f.Account, f.RespondedAt)
+	sess.Limit = b.limit(f)
 	sess.Title = f.Title
 	sess.GitBranch = f.GitBranch
 	sess.LastAtMs = ms(f.LastAt)
@@ -1065,6 +1125,7 @@ func (b *build) session(rs scan.Session) (Session, acc, acc) {
 	u, fresh := b.usage(path, f, paths, states)
 	for i, af := range found {
 		a, aAll, aToday := b.agent(af, states[i], rs.Cwd, u.agents[i], count)
+		b.heard(f.Account, states[i].RespondedAt)
 		sess.Agents = append(sess.Agents, a)
 		if a.Status == StatusRunning || a.Status == StatusQuiet {
 			sess.ActiveAgents++
@@ -1165,6 +1226,13 @@ func (b *build) agent(af scan.AgentFile, f *parse.File, cwd string, own map[pars
 	default:
 		a.Status = StatusStopped
 	}
+	// Held by a usage limit, the agent is neither working nor given up on:
+	// it is waiting for the limit, and says so. Which status it would have
+	// otherwise is kept, for when the limit turns out to have lifted.
+	if l := b.limit(f); l != nil && !ended {
+		a.Limit, a.unlimited, a.Status = l, a.Status, StatusLimited
+		a.AwaitingTool = false
+	}
 	a.SilentMs = silent.Milliseconds()
 	if a.Status == StatusRunning || a.Status == StatusQuiet {
 		a.Pulse = f.Pulse(b.now, PulseMinutes)
@@ -1221,6 +1289,105 @@ func ms(t time.Time) int64 {
 		return 0
 	}
 	return t.UnixMilli()
+}
+
+// heard notes when a session of an account last got a real answer from the
+// model. Sessions whose account is not known are not grouped with any other.
+func (b *build) heard(account string, at time.Time) {
+	if account == "" || at.IsZero() {
+		return
+	}
+	if at.After(b.responded[account]) {
+		b.responded[account] = at
+	}
+}
+
+// limit returns the usage limit f last ran into, unless the time it named
+// for lifting has come.
+func (b *build) limit(f *parse.File) *Limit {
+	l := f.Limit
+	if l == nil || (!l.ResetsAt.IsZero() && !b.now.Before(l.ResetsAt)) {
+		return nil
+	}
+	return &Limit{Kind: l.Kind, ResetsAtMs: ms(l.ResetsAt), AtMs: ms(l.At)}
+}
+
+// settleLimits drops the limits that have lifted for the account they belong
+// to, and gathers the rest. A limit is the account's, not one session's: when
+// any session on the same account has been answered since it was hit, it has
+// lifted for all of them, whether its time came or the user reset it. A
+// session on another account says nothing about it.
+func (b *build) settleLimits(projects []*Project, counts *Counts) []LimitGroup {
+	lifted := func(account string, l *Limit) bool {
+		at, ok := b.responded[account]
+		return account != "" && ok && at.UnixMilli() > l.AtMs
+	}
+	type key struct {
+		kind string
+		at   int64
+	}
+	groups := map[key]*LimitGroup{}
+	group := func(l *Limit) *LimitGroup {
+		k := key{l.Kind, l.ResetsAtMs}
+		g, ok := groups[k]
+		if !ok {
+			g = &LimitGroup{Kind: l.Kind, ResetsAtMs: l.ResetsAtMs}
+			groups[k] = g
+		}
+		return g
+	}
+	for _, p := range projects {
+		for i := range p.Sessions {
+			s := &p.Sessions[i]
+			if s.Limit != nil && lifted(s.account, s.Limit) {
+				s.Limit = nil
+			}
+			if s.Limit != nil && !s.Duplicate {
+				group(s.Limit).Sessions++
+			}
+			for j := range s.Agents {
+				a := &s.Agents[j]
+				if a.Limit == nil {
+					continue
+				}
+				if !lifted(s.account, a.Limit) {
+					if !s.Duplicate {
+						group(a.Limit).Agents++
+					}
+					continue
+				}
+				a.Limit, a.Status = nil, a.unlimited
+				if a.Status != StatusRunning && a.Status != StatusQuiet {
+					continue
+				}
+				s.ActiveAgents++
+				if s.Duplicate {
+					continue
+				}
+				if a.Status == StatusRunning {
+					counts.RunningAgents++
+				} else {
+					counts.QuietAgents++
+				}
+			}
+		}
+	}
+	out := make([]LimitGroup, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, *g)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// Soonest to lift first; one whose time is unknown last.
+		ai, aj := out[i].ResetsAtMs, out[j].ResetsAtMs
+		if (ai == 0) != (aj == 0) {
+			return aj == 0
+		}
+		if ai != aj {
+			return ai < aj
+		}
+		return out[i].Kind < out[j].Kind
+	})
+	return out
 }
 
 // activity converts parser activity for display, showing file paths relative

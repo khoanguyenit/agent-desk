@@ -18,7 +18,7 @@ Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và t
 
 Đầu trang là một khối tổng quan:
 
-- **Dãy bàn làm việc** (bên trái): mỗi project một bàn, mỗi người ngồi là một việc đang diễn ra, gồm luồng chính của session và từng agent chưa xong. Người đang chạy có ba chấm nhấp nháy trên đầu và đèn laptop xanh; đang chờ thì có dấu tạm dừng màu hổ phách; session rảnh vẽ bằng nét viền. Dưới mỗi bàn là chi phí của project. Bấm vào một bàn để cuộn tới phần của project đó.
+- **Dãy bàn làm việc** (bên trái): mỗi project một bàn, mỗi người ngồi là một việc đang diễn ra, gồm luồng chính của session và từng agent chưa xong. Người đang chạy có ba chấm nhấp nháy trên đầu và đèn laptop xanh; đang chờ thì có dấu tạm dừng màu hổ phách; bị chặn vì giới hạn sử dụng thì có vạch ngang và đèn đỏ; session rảnh vẽ bằng nét viền. Dưới mỗi bàn là chi phí của project. Bấm vào một bàn để cuộn tới phần của project đó.
 - **Ẩn bớt project:** rê chuột lên một bàn rồi bấm dấu **×** để cất project đó khỏi bảng, cả bàn lẫn khối bên dưới. Chi phí của nó vẫn nằm trong mọi con số tổng và thông báo của nó vẫn đến; ẩn chỉ là không vẽ ra. Cuối dãy bàn có dòng "N project đang ẩn" (kèm số project trong đó đang chạy): bấm vào để xem các bàn đã cất, rồi bấm **Hiện lại** ở bàn muốn đưa về bảng.
 - **Quầy chi phí** (bên phải): chi phí hôm nay và tổng chi phí của mọi session trên trang, kèm chi phí theo từng model. Session đã đóng trong hôm nay vẫn được tính, nên tắt một project không làm con số tụt xuống; xem [Chi phí được tính thế nào](#chi-phí-được-tính-thế-nào). Cạnh hai con số là dãy cột của 14 ngày gần nhất, bấm vào để sang trang Lịch sử. Nếu bạn đã đặt ngưỡng chi phí cho một ngày, dưới cột **Hôm nay** có thanh cho biết hôm nay đã tới bao nhiêu phần của ngưỡng.
 - **Chi phí theo loại token:** thanh này vẽ theo tiền chứ không theo số token, vì phần lớn token là cache đọc nhưng tiền lại chia khá đều cho cache đọc, cache ghi và output.
@@ -43,7 +43,7 @@ Ba công tắc ở góc trên:
 | **Ẩn agent đã kết thúc** | Chỉ để lại agent chưa xong: đang chạy, chờ lệnh hoặc im lặng. |
 | **Ẩn nội dung** | Dùng khi chia sẻ màn hình. Giấu câu lệnh, yêu cầu và kết quả, cùng những gì gọi tên công việc: tiêu đề session, mô tả agent, tên nhánh, tên giai đoạn của workflow. Bảng khi đó gọi session bằng 8 ký tự đầu của mã session, gọi agent bằng loại agent. Tên project, số liệu và tên tool vẫn hiện. Thông báo cũng bỏ tên session và tên agent. |
 
-Trạng thái của session (dòng đầu mỗi khối) do Claude Code tự ghi: **Đang chạy** khi một lượt đang diễn ra, **Rảnh** khi lượt đã xong, **Chờ bạn trả lời** khi session dừng giữa lượt để hỏi bạn hoặc chờ bạn duyệt. Session do app mở mà đang xin phép thì ghi **Chờ bạn cho phép**, vì câu trả lời nằm ngay trong app. Số session đang chờ bạn hiện riêng trong dòng chữ lớn ở đầu trang.
+Trạng thái của session (dòng đầu mỗi khối) do Claude Code tự ghi: **Đang chạy** khi một lượt đang diễn ra, **Rảnh** khi lượt đã xong, **Chờ bạn trả lời** khi session dừng giữa lượt để hỏi bạn hoặc chờ bạn duyệt. Session do app mở mà đang xin phép thì ghi **Chờ bạn cho phép**, vì câu trả lời nằm ngay trong app. Số session đang chờ bạn hiện riêng trong dòng chữ lớn ở đầu trang. Session hay agent mà lần gọi gần nhất bị từ chối vì giới hạn sử dụng thì ghi **Bị chặn tới HH:MM**; xem [Giới hạn sử dụng](#giới-hạn-sử-dụng).
 
 Trạng thái của agent:
 
@@ -53,7 +53,19 @@ Trạng thái của agent:
 | Chờ lệnh | Đã gọi một tool và chưa có kết quả. Build hay test chạy lâu là bình thường; quá 3 giờ thì coi như đã dừng. |
 | Im lặng | 2 đến 15 phút không ghi gì và không chờ tool nào: model đang suy nghĩ lâu, hoặc đã treo. |
 | Đã dừng | Im lặng quá lâu mà không kết thúc, nhiều khả năng bị ngắt giữa chừng. |
+| Bị chặn | Lần gọi gần nhất bị từ chối vì chạm giới hạn sử dụng, và giới hạn đó chưa mở lại. Agent bị chặn không tự chạy lại khi giới hạn mở. |
 | Xong | Đã trả kết quả, hoặc được Claude Code đánh dấu xong. |
+
+### Giới hạn sử dụng
+
+Khi tài khoản dùng hết giới hạn 5 giờ hoặc giới hạn tuần, Claude Code không gọi model nữa mà ghi vào transcript một dòng từ chối, kèm loại giới hạn và giờ mở lại. App đọc dòng đó:
+
+- Dòng của session hay agent ghi **Bị chặn tới HH:MM** (rê chuột để xem ngày), trên bàn người đó có vạch ngang và đèn đỏ, và dưới dòng chữ lớn ở đầu trang có một câu như "Chạm giới hạn tuần: 2 session và 12 agent bị chặn tới 02:00 ngày mai".
+- App báo một lần cho mỗi đợt chặn, dù có bao nhiêu agent dính vào, và báo lần nữa khi tới giờ mở lại. Session đang chạy mà bị chặn thì không bị báo nhầm là "đã xong".
+- Giới hạn tính theo **tài khoản**. Khi một session cùng tài khoản được model trả lời lại sau lúc bị chặn (giới hạn mở sớm, hoặc bạn đã reset), mọi session của tài khoản đó thôi ghi bị chặn. Session chạy bằng tài khoản khác không ảnh hưởng. App nhận ra tài khoản bằng mã tài khoản mà Claude Code ghi trong transcript (dòng `session-owner`); mã này chỉ nằm trong bộ nhớ của app để gom các session lại, không hiện ra và không được lưu.
+- Bản Claude Code cũ không ghi giờ mở lại; khi đó app ghi "chưa rõ tới khi nào" chứ không đoán.
+
+App chỉ biết một giới hạn khi đã có lần gọi bị từ chối. Nó không biết bạn đã dùng bao nhiêu phần trăm giới hạn trước lúc đó.
 
 Hai cột token dễ nhầm:
 
@@ -78,6 +90,7 @@ Những việc được báo:
 - agent đang làm thì im lặng quá lâu và bị coi là đã dừng;
 - agent chờ một lệnh quá 30 phút;
 - chi phí trong ngày vượt ngưỡng bạn đặt (một lần mỗi ngày);
+- chạm giới hạn sử dụng (một lần cho mỗi đợt chặn), và khi tới giờ giới hạn mở lại;
 - session do app mở xin phép.
 
 Lần quét đầu tiên sau khi mở app không báo gì, dù trước đó đã có bao nhiêu việc xong.
@@ -196,7 +209,7 @@ App đọc những file sau trong thư mục cấu hình của Claude Code (`~/.
 | Đường dẫn | Dùng để |
 |---|---|
 | `sessions/<pid>.json` | Biết session nào đang chạy, ở thư mục nào. Mục của process đã thoát bị bỏ qua. |
-| `projects/<project>/<session>.jsonl` | Transcript luồng chính: tiêu đề, yêu cầu gần nhất, token từng lần gọi. |
+| `projects/<project>/<session>.jsonl` | Transcript luồng chính: tiêu đề, yêu cầu gần nhất, token từng lần gọi, lần bị từ chối vì giới hạn sử dụng, và mã tài khoản (chỉ để biết session nào chung một giới hạn; không hiện, không lưu). |
 | `projects/<project>/<session>/subagents/**/agent-*.jsonl` và `.meta.json` | Transcript và mô tả của từng subagent, kể cả agent do workflow sinh ra. |
 
 Để dựng lịch sử, app còn đọc transcript của những session đã đóng từ các ngày trước, cũng trong `projects/`, mỗi file một lần cho tới khi file đó thay đổi. Từ những file ấy app chỉ lấy số token, ngày, model và thư mục.

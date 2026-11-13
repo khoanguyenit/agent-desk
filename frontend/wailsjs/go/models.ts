@@ -437,6 +437,22 @@ export namespace monitor {
 		    return a;
 		}
 	}
+	export class Limit {
+	    kind: string;
+	    resetsAtMs: number;
+	    atMs: number;
+
+	    static createFrom(source: any = {}) {
+	        return new Limit(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.resetsAtMs = source["resetsAtMs"];
+	        this.atMs = source["atMs"];
+	    }
+	}
 	export class Agent {
 	    id: string;
 	    type: string;
@@ -458,6 +474,7 @@ export namespace monitor {
 	    today: Spend;
 	    activity: Activity;
 	    pulse: number[];
+	    limit?: Limit;
 	
 	    static createFrom(source: any = {}) {
 	        return new Agent(source);
@@ -485,6 +502,7 @@ export namespace monitor {
 	        this.today = this.convertValues(source["today"], Spend);
 	        this.activity = this.convertValues(source["activity"], Activity);
 	        this.pulse = source["pulse"];
+	        this.limit = this.convertValues(source["limit"], Limit);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -779,7 +797,8 @@ export namespace monitor {
 	    duplicate: boolean;
 	    managed: boolean;
 	    awaitingUser: boolean;
-	
+	    limit?: Limit;
+
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
@@ -813,6 +832,7 @@ export namespace monitor {
 	        this.duplicate = source["duplicate"];
 	        this.managed = source["managed"];
 	        this.awaitingUser = source["awaitingUser"];
+	        this.limit = this.convertValues(source["limit"], Limit);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -876,6 +896,24 @@ export namespace monitor {
 		}
 	}
 	
+	export class LimitGroup {
+	    kind: string;
+	    resetsAtMs: number;
+	    sessions: number;
+	    agents: number;
+
+	    static createFrom(source: any = {}) {
+	        return new LimitGroup(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.resetsAtMs = source["resetsAtMs"];
+	        this.sessions = source["sessions"];
+	        this.agents = source["agents"];
+	    }
+	}
 	export class Snapshot {
 	    generatedAtMs: number;
 	    today: string;
@@ -891,7 +929,8 @@ export namespace monitor {
 	    pricingSource: string;
 	    pricingPath: string;
 	    warnings: string[];
-	
+	    limits: LimitGroup[];
+
 	    static createFrom(source: any = {}) {
 	        return new Snapshot(source);
 	    }
@@ -912,6 +951,7 @@ export namespace monitor {
 	        this.pricingSource = source["pricingSource"];
 	        this.pricingPath = source["pricingPath"];
 	        this.warnings = source["warnings"];
+	        this.limits = this.convertValues(source["limits"], LimitGroup);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

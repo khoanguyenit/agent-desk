@@ -72,6 +72,39 @@ export function hourMinute(ms: number): string {
     return `${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+// ---- usage limits --------------------------------------------------------------
+
+// limitName words a usage limit by Claude Code's name for it, as the
+// notifications do (LimitName in internal/monitor/events.go).
+export function limitName(kind: string): string {
+    if (!kind) return 'giới hạn sử dụng';
+    if (kind.startsWith('five_hour')) return 'giới hạn 5 giờ';
+    if (kind.startsWith('seven_day')) return 'giới hạn tuần';
+    return `giới hạn ${kind}`;
+}
+
+// Weekday names as they read in the middle of a sentence.
+const WEEKDAYS_INLINE = ['Chủ nhật', 'thứ hai', 'thứ ba', 'thứ tư', 'thứ năm', 'thứ sáu', 'thứ bảy'];
+
+// when words a moment near now: "17:00 hôm nay", "02:00 ngày mai", or
+// "02:00 thứ sáu 13/11" further off (WhenText in internal/monitor/events.go).
+export function when(atMs: number, nowMs: number): string {
+    const t = new Date(atMs);
+    const n = new Date(nowMs);
+    const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const tomorrow = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+    const clockText = hourMinute(atMs);
+    if (sameDay(t, n)) return `${clockText} hôm nay`;
+    if (sameDay(t, tomorrow)) return `${clockText} ngày mai`;
+    return `${clockText} ${WEEKDAYS_INLINE[t.getDay()]} ${t.getDate()}/${t.getMonth() + 1}`;
+}
+
+// limitUntil says until when a limit holds: "tới 02:00 ngày mai", or that
+// Claude Code did not say.
+export function limitUntil(resetsAtMs: number, nowMs: number): string {
+    return resetsAtMs > 0 ? `tới ${when(resetsAtMs, nowMs)}` : 'chưa rõ tới khi nào';
+}
+
 // ---- calendar days -------------------------------------------------------------
 
 // A day travels as "2026-11-12", the local date the Go side filed it under.
