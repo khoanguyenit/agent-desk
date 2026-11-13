@@ -324,24 +324,24 @@ export namespace main {
 	        this.problem = source["problem"];
 	    }
 	
-	convertValues(a: any, classs: any, asMap: boolean = false): any {
-	    if (!a) {
-	        return a;
-	    }
-	    if (a.slice && a.map) {
-	        return (a as any[]).map(elem => this.convertValues(elem, classs));
-	    } else if ("object" === typeof a) {
-	        if (asMap) {
-	            for (const key of Object.keys(a)) {
-	                a[key] = new classs(a[key]);
-	            }
-	            return a;
-	        }
-	        return new classs(a);
-	    }
-	    return a;
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
-}
 	export class TrailResult {
 	    trail: monitor.Trail;
 	    problem: string;
@@ -411,6 +411,22 @@ export namespace monitor {
 	        this.atMs = source["atMs"];
 	    }
 	}
+	export class Limit {
+	    kind: string;
+	    resetsAtMs: number;
+	    atMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Limit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.resetsAtMs = source["resetsAtMs"];
+	        this.atMs = source["atMs"];
+	    }
+	}
 	export class CostParts {
 	    input: number;
 	    output: number;
@@ -468,22 +484,6 @@ export namespace monitor {
 		    }
 		    return a;
 		}
-	}
-	export class Limit {
-	    kind: string;
-	    resetsAtMs: number;
-	    atMs: number;
-
-	    static createFrom(source: any = {}) {
-	        return new Limit(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.resetsAtMs = source["resetsAtMs"];
-	        this.atMs = source["atMs"];
-	    }
 	}
 	export class Agent {
 	    id: string;
@@ -602,6 +602,20 @@ export namespace monitor {
 		}
 	}
 	
+	export class Count {
+	    name: string;
+	    n: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Count(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.n = source["n"];
+	    }
+	}
 	export class Counts {
 	    projects: number;
 	    sessions: number;
@@ -745,6 +759,25 @@ export namespace monitor {
 	
 	
 	
+	
+	export class LimitGroup {
+	    kind: string;
+	    resetsAtMs: number;
+	    sessions: number;
+	    agents: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LimitGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.resetsAtMs = source["resetsAtMs"];
+	        this.sessions = source["sessions"];
+	        this.agents = source["agents"];
+	    }
+	}
 	export class ModelChoice {
 	    id: string;
 	    label: string;
@@ -831,7 +864,7 @@ export namespace monitor {
 	    managed: boolean;
 	    awaitingUser: boolean;
 	    limit?: Limit;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
 	    }
@@ -930,24 +963,6 @@ export namespace monitor {
 		}
 	}
 	
-	export class LimitGroup {
-	    kind: string;
-	    resetsAtMs: number;
-	    sessions: number;
-	    agents: number;
-
-	    static createFrom(source: any = {}) {
-	        return new LimitGroup(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.resetsAtMs = source["resetsAtMs"];
-	        this.sessions = source["sessions"];
-	        this.agents = source["agents"];
-	    }
-	}
 	export class Snapshot {
 	    generatedAtMs: number;
 	    today: string;
@@ -964,7 +979,7 @@ export namespace monitor {
 	    pricingPath: string;
 	    warnings: string[];
 	    limits: LimitGroup[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Snapshot(source);
 	    }
@@ -1007,20 +1022,6 @@ export namespace monitor {
 		}
 	}
 	
-	export class Count {
-	    name: string;
-	    n: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new Count(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.n = source["n"];
-	    }
-	}
 	export class Summary {
 	    sessionId: string;
 	    prompts: number;
@@ -1089,24 +1090,24 @@ export namespace monitor {
 	        this.hidden = source["hidden"];
 	    }
 	
-	convertValues(a: any, classs: any, asMap: boolean = false): any {
-	    if (!a) {
-	        return a;
-	    }
-	    if (a.slice && a.map) {
-	        return (a as any[]).map(elem => this.convertValues(elem, classs));
-	    } else if ("object" === typeof a) {
-	        if (asMap) {
-	            for (const key of Object.keys(a)) {
-	                a[key] = new classs(a[key]);
-	            }
-	            return a;
-	        }
-	        return new classs(a);
-	    }
-	    return a;
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
-}
 	export class TrailStep {
 	    kind: string;
 	    tool: string;
