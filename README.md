@@ -14,7 +14,9 @@ Nó dành cho người mở nhiều project trong VS Code, mỗi project một s
 
 ## Dùng
 
-Chạy `monitor-agent.exe`. App từng có tên Agent Monitor; file chạy và thư mục dữ liệu vẫn giữ tên `monitor-agent` để bảng giá bạn đã sửa và danh sách project của bản cũ dùng tiếp được. Lần mở đầu mất vài giây vì phải đọc toàn bộ transcript; sau đó app tự quét mỗi 2 giây và chỉ đọc phần mới.
+Chạy `agent-desk.exe`. Lần mở đầu mất vài giây vì phải đọc toàn bộ transcript; sau đó app tự quét mỗi 2 giây và chỉ đọc phần mới.
+
+App từng có tên Agent Monitor, file chạy từng là `monitor-agent.exe`. Thư mục dữ liệu vẫn giữ tên `monitor-agent`, nên bảng giá bạn đã sửa, danh sách project, sổ lịch sử chi phí và các công tắc của bản cũ dùng tiếp được. Windows nhận ra app gửi thông báo theo tên file chạy, nên nếu bạn từng tắt hoặc chỉnh thông báo của `monitor-agent.exe` trong **Settings → System → Notifications**, hãy chỉnh lại cho `agent-desk.exe`.
 
 Đầu trang là một khối tổng quan:
 

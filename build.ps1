@@ -17,7 +17,7 @@ if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 wails build -clean -trimpath -webview2 error
 if ($LASTEXITCODE -ne 0) { throw "wails build failed" }
 
-$exe = Join-Path $PSScriptRoot "build\bin\monitor-agent.exe"
+$exe = Join-Path $PSScriptRoot "build\bin\agent-desk.exe"
 "Built $exe"
 "SHA-256 " + (Get-FileHash $exe -Algorithm SHA256).Hash
 go version -m $exe | Select-String -Pattern '^\S+: go|^\s+path|^\s+mod|golang.org/x/net|wailsapp/wails'
