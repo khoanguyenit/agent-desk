@@ -41,6 +41,8 @@ func TestSummarizeAddsUpASession(t *testing.T) {
 		resp("r1", "2026-11-12T03:00:10.000Z", edit, ""),
 		`{"type":"user","timestamp":"2026-11-12T03:00:12.000Z","permissionDecision":{"decision":"accept","source":"config","reasonType":"classifier"},"toolUseResult":{"structuredPatch":[{"lines":["-x","+y","+z"]}]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t_edit","content":"ok"}]}}`,
 		resp("r9", "2026-11-12T03:10:00.000Z", `{"type":"tool_use","id":"t_read","name":"Read","input":{"file_path":"d:\\app\\a.go"}}`, ""),
+		// Handing the report back is the agent's result, not a tool call.
+		resp("r10", "2026-11-12T03:10:30.000Z", `{"type":"tool_use","id":"t_done","name":"StructuredOutput","input":{"ok":true}}`, ""),
 	))
 
 	sum, err := Summarize(main, []string{agent, filepath.Join(dir, "missing.jsonl")})
@@ -68,7 +70,7 @@ func TestSummarizeAddsUpASession(t *testing.T) {
 	if sum.ToolTime != 2*time.Second+9500*time.Millisecond+time.Second+5*time.Second {
 		t.Errorf("tool time = %v", sum.ToolTime)
 	}
-	if sum.Responses != 4 || sum.OutputTokens != 400 || sum.ThinkingTokens != 160 || sum.Efforts["xhigh"] != 4 {
+	if sum.Responses != 5 || sum.OutputTokens != 500 || sum.ThinkingTokens != 200 || sum.Efforts["xhigh"] != 5 {
 		t.Errorf("responses = %d, output = %d, thinking = %d, efforts = %v", sum.Responses, sum.OutputTokens, sum.ThinkingTokens, sum.Efforts)
 	}
 	if sum.CacheMisses != 1 || sum.CacheMissTokens != 5000 || sum.Compactions != 1 || sum.CompactedFrom != 180000 || sum.CompactedTo != 20000 {
@@ -80,7 +82,7 @@ func TestSummarizeAddsUpASession(t *testing.T) {
 	if !sum.Partial {
 		t.Error("a transcript that could not be read is not reported")
 	}
-	if want := time.Date(2026, 11, 12, 3, 10, 0, 0, time.UTC); !sum.LastAt.Equal(want) {
+	if want := time.Date(2026, 11, 12, 3, 10, 30, 0, time.UTC); !sum.LastAt.Equal(want) {
 		t.Errorf("last at = %v", sum.LastAt)
 	}
 }

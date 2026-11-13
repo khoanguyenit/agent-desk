@@ -90,7 +90,7 @@ export function summaryBody(s: monitor.Summary, agents: monitor.Agent[] | null):
                 'Từ dòng đầu tới dòng cuối của transcript, gồm cả lúc session nghỉ.'),
             row('Câu bạn gõ', n(s.prompts),
                 'Không tính thông báo từ việc chạy nền, tóm tắt sau compact và kết quả lệnh do Claude Code tự đưa vào.'),
-            row('Gọi tool', `${n(s.toolCalls)} lần` + ((s.tools ?? []).length > 0 ? `: ${named(s.tools, {})}` : '')),
+            row('Gọi tool', `${n(s.toolCalls)} lần` + ((s.tools ?? []).length > 0 ? `, nhiều nhất: ${named((s.tools ?? []).slice(0, 5), {})}` : '')),
             s.toolMs > 0 && row('Chạy tool', f.duration(s.toolMs),
                 'Cộng thời gian của từng lần gọi tool; các lần chạy song song đều được tính đủ.'),
             s.agents > 0 && row('Agent', n(s.agents) + (s.workflows > 0 ? ` (${n(s.workflows)} workflow)` : '')),

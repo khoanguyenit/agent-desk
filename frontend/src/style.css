@@ -2082,10 +2082,11 @@ button {
     color: var(--ink-2);
 }
 
+/* One column: the panel is narrow, and a figure such as a file path or the
+   list of tools reads on one line only when it has the panel's width. */
 .chat-summary-body {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-    gap: 12px 20px;
+    gap: 12px;
     padding: 4px 16px 12px;
 }
 
@@ -2104,7 +2105,7 @@ button {
 
 .sum-row {
     display: grid;
-    grid-template-columns: 112px minmax(0, 1fr);
+    grid-template-columns: 128px minmax(0, 1fr);
     gap: 8px;
     padding: 2px 0;
 }

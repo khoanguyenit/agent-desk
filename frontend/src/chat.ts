@@ -67,6 +67,7 @@ let trailProblem = '';
 // reads every transcript of the session, so it is asked for when the panel
 // turns to a session and then at most every SUMMARY_MS, not on every refresh.
 const SUMMARY_MS = 30_000;
+const SUMMARY_RETRY_MS = 4_000;
 let summary: monitor.Summary | null = null;
 let summaryId = '';
 let summaryAt = 0;
@@ -825,12 +826,18 @@ async function pullSummary(force = false): Promise<void> {
         if (asked !== gen) return;
         summaryProblem = err instanceof Error ? err.message : String(err);
     }
+    // A session the app has just started is not in Claude Code's list for a
+    // moment, and has nothing to add up yet: ask again soon rather than
+    // waiting for the next round.
+    if (summaryProblem && !summary) summaryAt = Date.now() - SUMMARY_MS + SUMMARY_RETRY_MS;
     drawSummary();
 }
 
 function drawSummary(): void {
     const id = summaryTarget();
-    if (!id || id !== summaryId || (!summary && !summaryProblem)) {
+    // The summary is an aside: until there is one, nothing is shown, not even
+    // why. The steps and the permission cards below it are what matters.
+    if (!id || id !== summaryId || !summary) {
         summaryBox.hidden = true;
         return;
     }
@@ -847,7 +854,7 @@ function drawSummary(): void {
     );
     summaryInner.replaceChildren(
         ...(summary ? summaryBody(summary, agents) : []),
-        summaryProblem ? h('p', {class: 'sum-note'}, summaryProblem) : '',
+        summaryProblem ? h('p', {class: 'sum-note'}, `Chưa cập nhật được: ${summaryProblem}`) : '',
     );
 }
 
@@ -922,6 +929,9 @@ function turn(to: Showing): void {
     summaryProblem = '';
     summaryStamp = '';
     summaryBox.hidden = true;
+    // Folded again for every session: opened, it would take the room a
+    // permission card needs.
+    summaryBox.open = false;
     itemsBox.replaceChildren();
     pendingBox.replaceChildren();
     pickerShape = '';

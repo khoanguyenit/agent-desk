@@ -257,6 +257,11 @@ func (s *summing) assistant(l sumLine, at time.Time) {
 		if _, seen := s.calls[b.ID]; seen || s.results[b.ID] {
 			continue
 		}
+		// A subagent handing its report back is its result, not work it did:
+		// the board shows it as the report, and it is not counted as a call.
+		if terminalTools[b.Name] {
+			continue
+		}
 		name := clean.Text(b.Name, labelRunes)
 		s.sum.ToolCalls++
 		s.sum.Tools[name]++
